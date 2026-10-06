@@ -35,3 +35,7 @@
 @keyframes status-arrive{from{opacity:.45;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 @keyframes card-land{from{opacity:0;transform:translate(var(--enter-x),var(--enter-y)) scale(.94)}to{opacity:1;transform:translate(0,0) scale(1)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+.declaration-choices{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:2px 0 13px;font-size:12px;color:#60786b}
+.declaration-choice{border:1px solid #b8ccbd;border-radius:99px;background:#f7faf5;color:#265342;padding:7px 11px;font-size:12px;cursor:pointer}
+.declaration-choice.active{background:#245744;border-color:#245744;color:#fff}
+.declaration-choice:disabled{opacity:.42;cursor:not-allowed}

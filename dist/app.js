@@ -38,6 +38,11 @@
       function rankPower(rank, level) {
         return rank >= 16 ? rank + 1 : rank === level ? 16 : rank;
       }
+      function legalReturnCards2(hand, level) {
+        const normal = hand.filter((card) => card.rank <= 10 && card.rank !== level);
+        if (normal.length) return normal;
+        return hand.filter((card) => !(card.rank === level && card.suit === "H"));
+      }
       function sortCards2(cards, level) {
         const suitOrder = { S: 0, H: 1, C: 2, D: 3, J: 4 };
         return cards.slice().sort(
@@ -47,7 +52,7 @@
       function cardLabel2(card) {
         return card.rank >= 16 ? RANK_LABELS[card.rank] : `${SUIT_LABELS[card.suit]}${RANK_LABELS[card.rank] || card.rank}`;
       }
-      module.exports = { createDeck, shuffle, rankPower, sortCards: sortCards2, cardLabel: cardLabel2 };
+      module.exports = { createDeck, shuffle, rankPower, legalReturnCards: legalReturnCards2, sortCards: sortCards2, cardLabel: cardLabel2 };
     }
   });
 
@@ -67,6 +72,16 @@
         straightFlush: "\u540C\u82B1\u987A",
         jokerBomb: "\u56DB\u738B\u70B8"
       };
+      var SEQUENCE_TYPES = /* @__PURE__ */ new Set(["straight", "pairsRun", "triplesRun", "straightFlush"]);
+      function tierOf(move) {
+        if (move.type === "jokerBomb") return 9;
+        if (move.type === "straightFlush") return 3;
+        if (move.type === "bomb") return move.size < 6 ? move.size - 3 : move.size - 2;
+        return 0;
+      }
+      function moveKey2(move) {
+        return `${move.type}:${move.mainRank}:${move.size}`;
+      }
       function sequenceTop(values) {
         const sorted = values.slice().sort((a, b) => a - b);
         if (new Set(sorted).size !== values.length) return null;
@@ -78,28 +93,35 @@
         }
         return sorted[sorted.length - 1];
       }
-      function interpret(ranks, suits, level) {
+      function interpret(ranks, suits, level, wildIndexes) {
         const n = ranks.length;
         const counts = /* @__PURE__ */ new Map();
         for (const rank of ranks) counts.set(rank, (counts.get(rank) || 0) + 1);
         const groups = [...counts.entries()].sort((a, b) => b[1] - a[1] || rankPower(b[0], level) - rankPower(a[0], level));
         const allSame = groups.length === 1;
+        const invalidPair = (rank) => rank !== level && wildIndexes.filter((index) => ranks[index] === rank).length > 1;
         const results = [];
-        const add = (type, mainRank, tier = 0) => results.push({ type, mainRank, size: n, tier, power: rankPower(mainRank, level) });
-        if (n >= 4 && n <= 8 && allSame && ranks[0] < 16) add("bomb", ranks[0], n < 6 ? n - 3 : n - 2);
+        const add = (type, mainRank) => results.push({
+          type,
+          mainRank,
+          size: n,
+          tier: tierOf({ type, size: n }),
+          power: SEQUENCE_TYPES.has(type) ? mainRank : rankPower(mainRank, level)
+        });
+        if (n >= 4 && n <= 10 && allSame && ranks[0] < 16) add("bomb", ranks[0]);
         if (n === 5 && suits.every((suit) => suit === suits[0] && suit !== "J")) {
           const top = sequenceTop(ranks);
-          if (top !== null) add("straightFlush", top, 3);
+          if (top !== null) add("straightFlush", top);
         }
         if (n === 1) add("single", ranks[0]);
-        if (n === 2 && allSame) add("pair", ranks[0]);
+        if (n === 2 && allSame && !invalidPair(ranks[0])) add("pair", ranks[0]);
         if (n === 3 && allSame && ranks[0] < 16) add("triple", ranks[0]);
-        if (n === 5 && groups.length === 2 && groups[0][1] === 3 && groups[1][1] === 2 && groups[0][0] < 16) add("fullHouse", groups[0][0]);
+        if (n === 5 && groups.length === 2 && groups[0][1] === 3 && groups[1][1] === 2 && groups[0][0] < 16 && !invalidPair(groups[1][0])) add("fullHouse", groups[0][0]);
         if (n === 5 && ranks.every((rank) => rank < 16)) {
           const top = sequenceTop(ranks);
           if (top !== null) add("straight", top);
         }
-        if (n === 6 && groups.length === 3 && groups.every((group) => group[1] === 2 && group[0] < 16)) {
+        if (n === 6 && groups.length === 3 && groups.every((group) => group[1] === 2 && group[0] < 16 && !invalidPair(group[0]))) {
           const top = sequenceTop(groups.map((group) => group[0]));
           if (top !== null) add("pairsRun", top);
         }
@@ -109,10 +131,10 @@
         }
         return results;
       }
-      function classify2(cards, level) {
-        if (!Array.isArray(cards) || !cards.length || cards.length > 8 || new Set(cards.map((card) => card.id)).size !== cards.length) return null;
+      function classifyOptions2(cards, level) {
+        if (!Array.isArray(cards) || !cards.length || cards.length > 10 || new Set(cards.map((card) => card.id)).size !== cards.length) return [];
         if (cards.length === 4 && cards.filter((card) => card.rank === 16).length === 2 && cards.filter((card) => card.rank === 17).length === 2) {
-          return { type: "jokerBomb", mainRank: 17, size: 4, tier: 7, power: 18 };
+          return [{ type: "jokerBomb", mainRank: 17, size: 4, tier: 9, power: 18 }];
         }
         const wildIndexes = [];
         const ranks = cards.map((card, i) => {
@@ -125,7 +147,7 @@
         const found = [];
         function visit(index) {
           if (index === wildIndexes.length) {
-            found.push(...interpret(ranks, suits, level));
+            found.push(...interpret(ranks, suits, level, wildIndexes));
             return;
           }
           const position = wildIndexes[index];
@@ -140,15 +162,26 @@
           suits[position] = originalSuit;
         }
         visit(0);
-        if (!found.length) return null;
-        found.sort((a, b) => b.tier - a.tier || b.power - a.power);
-        return found[0];
+        const onlyWildcards = cards.length <= 2 && cards.every((card) => card.rank === level && card.suit === "H");
+        const unique = /* @__PURE__ */ new Map();
+        for (const option of found) {
+          if (onlyWildcards && option.mainRank !== level) continue;
+          if (option.type === "straight" && flushSuit) continue;
+          unique.set(moveKey2(option), option);
+        }
+        return [...unique.values()].sort((a, b) => b.tier - a.tier || b.power - a.power);
+      }
+      function classify(cards, level) {
+        return classifyOptions2(cards, level)[0] || null;
       }
       function beats2(candidate, previous) {
         if (!candidate) return false;
         if (!previous) return true;
-        if (candidate.tier !== previous.tier) return candidate.tier > previous.tier;
-        if (candidate.tier > 0) return candidate.power > previous.power;
+        const candidateTier = tierOf(candidate);
+        const previousTier = tierOf(previous);
+        if (candidateTier !== previousTier) return candidateTier > previousTier;
+        if (candidateTier > 0) return candidate.type === "straightFlush" ? candidate.mainRank > previous.mainRank : candidate.power > previous.power;
+        if (SEQUENCE_TYPES.has(candidate.type) && candidate.type === previous.type) return candidate.mainRank > previous.mainRank;
         return candidate.type === previous.type && candidate.size === previous.size && candidate.power > previous.power;
       }
       function generateMoves(hand, level) {
@@ -162,14 +195,15 @@
         const moves = /* @__PURE__ */ new Map();
         function add(cards) {
           if (!cards || !cards.length) return;
-          const move = classify2(cards, level);
-          if (!move) return;
-          const key = cards.map((card) => card.id).sort().join("|");
-          if (!moves.has(key)) moves.set(key, { cards: cards.slice(), ...move });
+          const physicalKey = cards.map((card) => card.id).sort().join("|");
+          for (const move of classifyOptions2(cards, level)) {
+            const key = `${physicalKey}:${moveKey2(move)}`;
+            if (!moves.has(key)) moves.set(key, { cards: cards.slice(), ...move });
+          }
         }
         for (const card of hand) add([card]);
         for (const [rank, group] of byRank) {
-          for (let size = 2; size <= Math.min(8, group.length + wild.length); size += 1) {
+          for (let size = 2; size <= Math.min(10, group.length + wild.length); size += 1) {
             for (let wc = 0; wc <= Math.min(wild.length, size); wc += 1) {
               if (group.length >= size - wc && size - wc > 0) add(group.slice(0, size - wc).concat(wild.slice(0, wc)));
             }
@@ -217,7 +251,7 @@
       function legalMoves(hand, level, previous) {
         return generateMoves(hand, level).filter((move) => beats2(move, previous));
       }
-      module.exports = { TYPE_LABELS: TYPE_LABELS2, classify: classify2, beats: beats2, generateMoves, legalMoves };
+      module.exports = { TYPE_LABELS: TYPE_LABELS2, classify, classifyOptions: classifyOptions2, moveKey: moveKey2, beats: beats2, generateMoves, legalMoves };
     }
   });
 
@@ -225,7 +259,7 @@
   var require_coach = __commonJS({
     "miniprogram/lib/coach.js"(exports, module) {
       var { legalMoves, TYPE_LABELS: TYPE_LABELS2 } = require_rules();
-      var { cardLabel: cardLabel2, rankPower } = require_cards();
+      var { cardLabel: cardLabel2 } = require_cards();
       function teammateOf(seat) {
         return (seat + 2) % 4;
       }
@@ -262,7 +296,8 @@
             reason,
             score,
             moveType: move.type,
-            power: rankPower(move.mainRank, visible2.levelRank)
+            power: move.power,
+            declaration: { type: move.type, mainRank: move.mainRank, size: move.size }
           };
         });
         if (visible2.lastPlay) {
@@ -293,17 +328,18 @@
   // miniprogram/lib/bot.js
   var require_bot = __commonJS({
     "miniprogram/lib/bot.js"(exports, module) {
-      var { createDeck, rankPower } = require_cards();
-      var { legalMoves, beats: beats2, classify: classify2 } = require_rules();
-      var DIFFICULTIES = ["simple", "hard1", "hard2"];
+      var { createDeck, rankPower, legalReturnCards: legalReturnCards2 } = require_cards();
+      var { legalMoves, beats: beats2, classifyOptions: classifyOptions2, moveKey: moveKey2 } = require_rules();
+      var DIFFICULTIES = ["simple", "hard1", "hard2", "danzero"];
       var teamOf = (seat) => seat % 2;
       var partnerOf = (seat) => (seat + 2) % 4;
+      var declarationOf = (move) => ({ type: move.type, mainRank: move.mainRank, size: move.size });
       function simpleAction(view) {
         const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
         if (view.lastPlay && view.lastSeat !== null && teamOf(view.lastSeat) === teamOf(view.turn)) return { pass: true };
         if (!moves.length) return { pass: true };
         moves.sort((a, b) => a.tier - b.tier || b.size - a.size || a.power - b.power);
-        return { pass: false, cardIds: moves[0].cards.map((card) => card.id) };
+        return { pass: false, cardIds: moves[0].cards.map((card) => card.id), declaration: declarationOf(moves[0]) };
       }
       function handQuality(hand, level) {
         const counts = /* @__PURE__ */ new Map();
@@ -370,10 +406,10 @@
       }
       function hard1Action(view) {
         const choice = rankedActions(view)[0];
-        return choice ? { pass: choice.pass, cardIds: choice.cardIds } : { pass: true };
+        return choice ? { pass: choice.pass, cardIds: choice.cardIds, declaration: choice.move && declarationOf(choice.move) } : { pass: true };
       }
       function chooseReturnCard(view, difficulty = "simple") {
-        const eligible = view.hand.filter((card) => card.rank <= 10);
+        const eligible = legalReturnCards2(view.hand, view.levelRank);
         if (difficulty === "simple") return eligible.sort((a, b) => rankPower(a.rank, view.levelRank) - rankPower(b.rank, view.levelRank))[0];
         return eligible.sort((a, b) => {
           const aQuality = handQuality(view.hand.filter((card) => card.id !== a.id), view.levelRank) - rankPower(a.rank, view.levelRank) * 0.15;
@@ -452,7 +488,10 @@
               continue;
             }
           } else {
-            const move = step === 0 ? action.move : classify2(hands[turn].filter((card) => current.cardIds.includes(card.id)), view.levelRank);
+            const move = step === 0 ? action.move : classifyOptions2(
+              hands[turn].filter((card) => current.cardIds.includes(card.id)),
+              view.levelRank
+            ).find((option) => moveKey2(option) === moveKey2(current.declaration));
             if (!move || !beats2(move, lastPlay)) return 0;
             const used = new Set(current.cardIds);
             hands[turn] = hands[turn].filter((card) => !used.has(card.id));
@@ -477,7 +516,7 @@
         const ranked = rankedActions(view);
         if (ranked.length <= 1 || !view.hand.length) return hard1Action(view);
         if (view.handCounts.reduce((sum, count) => sum + count, 0) > 42) {
-          return { pass: ranked[0].pass, cardIds: ranked[0].cardIds };
+          return { pass: ranked[0].pass, cardIds: ranked[0].cardIds, declaration: ranked[0].move && declarationOf(ranked[0].move) };
         }
         const shortlist = [];
         const seen = /* @__PURE__ */ new Set();
@@ -492,7 +531,7 @@
         if (bestBomb && !shortlist.includes(bestBomb)) shortlist.push(bestBomb);
         const passOption = ranked.find((action) => action.pass);
         if (passOption && !shortlist.includes(passOption)) shortlist.push(passOption);
-        if (shortlist.length === 1) return { pass: shortlist[0].pass, cardIds: shortlist[0].cardIds };
+        if (shortlist.length === 1) return { pass: shortlist[0].pass, cardIds: shortlist[0].cardIds, declaration: shortlist[0].move && declarationOf(shortlist[0].move) };
         const pool = unseenCards(view);
         const random = seededRandom(view);
         const worlds = Array.from({ length: 8 }, () => sampleHands(view, pool, random));
@@ -511,9 +550,10 @@
             best = action;
           }
         }
-        return { pass: best.pass, cardIds: best.cardIds };
+        return { pass: best.pass, cardIds: best.cardIds, declaration: best.move && declarationOf(best.move) };
       }
       function chooseBotAction(view, difficulty = "simple") {
+        if (difficulty === "danzero") throw new Error("DanZero \u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B Worker\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
         if (difficulty === "hard2") return hard2Action(view);
         if (difficulty === "hard1") return hard1Action(view);
         return simpleAction(view);
@@ -525,8 +565,8 @@
   // miniprogram/lib/match.js
   var require_match = __commonJS({
     "miniprogram/lib/match.js"(exports, module) {
-      var { createDeck, shuffle, sortCards: sortCards2, rankPower, cardLabel: cardLabel2 } = require_cards();
-      var { classify: classify2, beats: beats2 } = require_rules();
+      var { createDeck, shuffle, sortCards: sortCards2, rankPower, legalReturnCards: legalReturnCards2, cardLabel: cardLabel2 } = require_cards();
+      var { classifyOptions: classifyOptions2, moveKey: moveKey2, beats: beats2 } = require_rules();
       var { recommend: recommend2 } = require_coach();
       var { DIFFICULTIES, chooseBotAction, chooseReturnCard } = require_bot();
       function teamOf(seat) {
@@ -595,14 +635,15 @@
         const prior = state.previousOrder;
         const payers = teamOf(prior[0]) === teamOf(prior[1]) ? prior.slice(2) : [prior[3]];
         const recipients = payers.length === 2 ? prior.slice(0, 2) : [prior[0]];
-        if (payers.some((seat) => state.hands[seat].filter((card) => card.rank === 17).length === 2)) {
+        if (payers.reduce((count, seat) => count + state.hands[seat].filter((card) => card.rank === 17).length, 0) === 2) {
           addEvent(state, { type: "antiTribute", seats: payers });
           return state;
         }
         const offerings = payers.map((payer) => {
           const eligible = state.hands[payer].filter((card) => !(card.rank === state.levelRank && card.suit === "H"));
           return { payer, card: rankHighest(eligible, state.levelRank) };
-        }).sort((a, b) => rankPower(b.card.rank, state.levelRank) - rankPower(a.card.rank, state.levelRank) || a.payer - b.payer);
+        }).sort((a, b) => rankPower(b.card.rank, state.levelRank) - rankPower(a.card.rank, state.levelRank) || (payers.length === 2 ? prior.indexOf(b.payer) - prior.indexOf(a.payer) : 0));
+        const tiedDoubleTribute = offerings.length === 2 && rankPower(offerings[0].card.rank, state.levelRank) === rankPower(offerings[1].card.rank, state.levelRank);
         offerings.forEach((offering, index) => {
           const receiver = recipients[index];
           state.hands[offering.payer] = state.hands[offering.payer].filter((card) => card.id !== offering.card.id);
@@ -610,7 +651,7 @@
           state.pendingReturns.push({ payer: offering.payer, receiver, tributeCard: offering.card });
           addEvent(state, { type: "tribute", seat: offering.payer, to: receiver, cards: [offering.card] });
         });
-        state.turn = offerings[0].payer;
+        state.turn = tiedDoubleTribute ? (prior[0] + 1) % 4 : offerings[0].payer;
         state.phase = "returning";
         return state;
       }
@@ -620,7 +661,9 @@
         if (index < 0) throw new Error("\u4E0D\u662F\u4F60\u7684\u8FD8\u8D21\u56DE\u5408");
         const pending = state.pendingReturns[index];
         const card = cardExists(state.hands[seat], cardId);
-        if (!card || card.rank > 10) throw new Error("\u8BF7\u8FD8\u4E00\u5F20\u70B9\u6570\u4E0D\u8D85\u8FC710\u7684\u724C");
+        if (!card || !legalReturnCards2(state.hands[seat], state.levelRank).some((item) => item.id === cardId)) {
+          throw new Error("\u8BF7\u9009\u62E9\u4E00\u5F20\u5408\u6CD5\u8FD8\u8D21\u724C\uFF08\u901A\u5E38\u4E3A\u4E0D\u8D85\u8FC710\u7684\u975E\u7EA7\u724C\uFF09");
+        }
         state.hands[seat] = state.hands[seat].filter((item) => item.id !== cardId);
         state.hands[pending.payer].push(card);
         addEvent(state, { type: "return", seat, to: pending.payer, cards: [card], privateTo: [seat, pending.payer] });
@@ -685,13 +728,15 @@
           }
         });
       }
-      function play2(state, seat, cardIds) {
+      function play2(state, seat, cardIds, declaration = null) {
         if (state.phase !== "playing") throw new Error("\u5F53\u524D\u4E0D\u80FD\u51FA\u724C");
         if (state.turn !== seat) throw new Error("\u8FD8\u6CA1\u8F6E\u5230\u4F60");
         if (!Array.isArray(cardIds) || !cardIds.length || new Set(cardIds).size !== cardIds.length) throw new Error("\u8BF7\u9009\u62E9\u8981\u51FA\u7684\u724C");
         const cards = cardIds.map((id) => cardExists(state.hands[seat], id));
         if (cards.some((card) => !card)) throw new Error("\u6240\u9009\u724C\u4E0D\u5728\u4F60\u7684\u624B\u91CC");
-        const move = classify2(cards, state.levelRank);
+        const options = classifyOptions2(cards, state.levelRank);
+        const move = declaration ? options.find((option) => moveKey2(option) === moveKey2(declaration)) : options[0];
+        if (declaration && !move) throw new Error("\u6240\u9009\u724C\u578B\u4E0E\u8FD9\u7EC4\u724C\u4E0D\u7B26");
         if (!move) throw new Error("\u8FD9\u4E0D\u662F\u6709\u6548\u724C\u578B");
         if (!beats2(move, state.lastPlay)) throw new Error("\u8FD9\u624B\u724C\u538B\u4E0D\u8FC7\u684C\u9762\u4E0A\u7684\u724C");
         recordDecision(state, seat);
@@ -749,7 +794,7 @@
         const seat = state.turn;
         const action = chooseBotAction(viewFor2(state, seat), state.players[seat].difficulty);
         if (action.pass) pass2(state, seat);
-        else play2(state, seat, action.cardIds);
+        else play2(state, seat, action.cardIds, action.declaration);
         return true;
       }
       function viewFor2(state, seat) {
@@ -776,7 +821,7 @@
           })
         };
       }
-      module.exports = { createMatch: createMatch2, startNextHand: startNextHand2, returnTribute: returnTribute2, play: play2, pass: pass2, autoAction: autoAction2, viewFor: viewFor2, teamOf };
+      module.exports = { createMatch: createMatch2, startNextHand: startNextHand2, returnTribute: returnTribute2, legalReturnCards: legalReturnCards2, play: play2, pass: pass2, autoAction: autoAction2, viewFor: viewFor2, teamOf };
     }
   });
 
@@ -854,8 +899,8 @@
 
   // web/app.js
   var { createMatch, startNextHand, returnTribute, play, pass, autoAction, viewFor } = require_match();
-  var { cardLabel, sortCards } = require_cards();
-  var { classify, beats, TYPE_LABELS } = require_rules();
+  var { cardLabel, sortCards, legalReturnCards } = require_cards();
+  var { classifyOptions, moveKey, beats, TYPE_LABELS } = require_rules();
   var { recommend } = require_coach();
   var { openingAnalysis } = require_planner();
   var STORAGE = "guandan-web-solo-v1";
@@ -866,6 +911,7 @@
   var match = null;
   var screen = "home";
   var selected = /* @__PURE__ */ new Set();
+  var selectedDeclarationKey = null;
   var cardOrder = [];
   var panel = "plans";
   var planId = null;
@@ -881,7 +927,50 @@
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
   var seatTone = (seat) => seat % 2 === 0 ? "ally" : "rival";
-  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C" };
+  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09 \xB7 DanZero" };
+  var danzeroWorker = null;
+  var modelRequestNumber = 0;
+  var botGeneration = 0;
+  var modelError = null;
+  var pendingModelRequests = /* @__PURE__ */ new Map();
+  function modelWorker() {
+    if (danzeroWorker) return danzeroWorker;
+    if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u96BE\u5EA6\u4E09\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
+    const worker = new Worker(new URL("./dist/danzero-worker.js?v=20261007", document.baseURI));
+    worker.onmessage = (event) => {
+      const pending = pendingModelRequests.get(event.data.id);
+      if (!pending) return;
+      pendingModelRequests.delete(event.data.id);
+      clearTimeout(pending.timer);
+      if (event.data.error) pending.reject(new Error(event.data.error));
+      else pending.resolve(event.data.action);
+    };
+    worker.onerror = () => {
+      for (const pending of pendingModelRequests.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error("DanZero \u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8"));
+      }
+      pendingModelRequests.clear();
+      worker.terminate();
+      if (danzeroWorker === worker) danzeroWorker = null;
+    };
+    danzeroWorker = worker;
+    return worker;
+  }
+  function requestModelAction(view) {
+    return new Promise((resolve, reject) => {
+      const worker = modelWorker();
+      const id = ++modelRequestNumber;
+      const timer = setTimeout(() => {
+        pendingModelRequests.delete(id);
+        worker.terminate();
+        if (danzeroWorker === worker) danzeroWorker = null;
+        reject(new Error("DanZero \u601D\u8003\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5"));
+      }, 9e4);
+      pendingModelRequests.set(id, { resolve, reject, timer });
+      worker.postMessage({ id, view });
+    });
+  }
   function inform(message) {
     toast.textContent = message;
     toast.classList.add("show");
@@ -906,6 +995,7 @@
   }
   function clearSelection() {
     selected.clear();
+    selectedDeclarationKey = null;
   }
   function clearBotCue() {
     clearTimeout(botCueTimer);
@@ -970,7 +1060,7 @@
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u518D\u63A8\u6F14\u672A\u77E5\u624B\u724C\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u7528\u672C\u5730 DanZero \u6A21\u578B\uFF0C\u9996\u6B21\u4F7F\u7528\u9700\u4E0B\u8F7D\u7EA6 5 MB\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -983,10 +1073,11 @@
   function currentMove(view) {
     const cards = view.hand.filter((card) => selected.has(card.id));
     if (!cards.length) return { text: "\u70B9\u9009\u624B\u724C\uFF0C\u7EC4\u5408\u4F60\u60F3\u51FA\u7684\u724C", valid: false, cards };
-    const move = classify(cards, view.levelRank);
-    if (!move) return { text: `\u5DF2\u9009 ${cards.length} \u5F20 \xB7 \u4E0D\u662F\u6709\u6548\u724C\u578B`, valid: false, cards };
+    const options = classifyOptions(cards, view.levelRank);
+    const move = options.find((option) => moveKey(option) === selectedDeclarationKey) || options.find((option) => beats(option, view.lastPlay)) || options[0];
+    if (!move) return { text: `\u5DF2\u9009 ${cards.length} \u5F20 \xB7 \u4E0D\u662F\u6709\u6548\u724C\u578B`, valid: false, cards, options };
     const valid = beats(move, view.lastPlay);
-    return { text: `\u5DF2\u9009 ${cards.length} \u5F20 \xB7 ${TYPE_LABELS[move.type]}${valid ? "" : " \xB7 \u538B\u4E0D\u8FC7\u684C\u9762"}`, valid, cards };
+    return { text: `\u5DF2\u9009 ${cards.length} \u5F20 \xB7 ${TYPE_LABELS[move.type]}${options.length > 1 ? `\uFF08${levelName(move.mainRank)}\uFF09` : ""}${valid ? "" : " \xB7 \u538B\u4E0D\u8FC7\u684C\u9762"}`, valid, cards, options, move };
   }
   function gameHTML() {
     const view = visible();
@@ -995,6 +1086,9 @@
     const myTurn = view.phase === "playing" && view.turn === 0;
     const returning = view.phase === "returning" && !!view.pendingReturn;
     const move = currentMove(view);
+    const returnableIds = new Set(returning ? legalReturnCards(view.hand, view.levelRank).map((card) => card.id) : []);
+    const returnFallback = returning && !view.hand.some((card) => card.rank <= 10 && card.rank !== view.levelRank);
+    const declarationHTML = view.phase === "playing" && move.options?.length > 1 ? `<div class="declaration-choices" aria-label="\u9009\u62E9\u9022\u4EBA\u914D\u724C\u578B"><span>\u8FD9\u7EC4\u724C\u53EF\u7533\u62A5\u4E3A</span>${move.options.map((option) => `<button type="button" data-action="declaration" data-key="${moveKey(option)}" aria-pressed="${moveKey(option) === moveKey(move.move)}" class="declaration-choice ${moveKey(option) === moveKey(move.move) ? "active" : ""}" ${beats(option, view.lastPlay) ? "" : "disabled"}>${TYPE_LABELS[option.type]} \xB7 ${levelName(option.mainRank)}</button>`).join("")}</div>` : "";
     const handById = new Map(view.hand.map((card) => [card.id, card]));
     const ordered = cardOrder.map((id) => handById.get(id)).filter(Boolean);
     const half = Math.ceil(ordered.length / 2);
@@ -1004,13 +1098,13 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
-    const ordinaryStatus = view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
   <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
   <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
-  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-row" aria-label="\u624B\u724C\u4E0A\u6392">${ordered.slice(0, half).map(cardHTML).join("")}</div><div class="hand-row" aria-label="\u624B\u724C\u4E0B\u6392">${ordered.slice(half).map((card, index) => cardHTML(card, half + index)).join("")}</div><div class="hand-hint">${move.text}</div><div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !move.cards[0] || move.cards[0].rank > 10 ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
+  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-row" aria-label="\u624B\u724C\u4E0A\u6392">${ordered.slice(0, half).map(cardHTML).join("")}</div><div class="hand-row" aria-label="\u624B\u724C\u4E0B\u6392">${ordered.slice(half).map((card, index) => cardHTML(card, half + index)).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(advice, view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
@@ -1040,32 +1134,53 @@
   function afterAction() {
     clearSelection();
     clearBotCue();
+    modelError = null;
     save();
     render();
     scheduleBot();
   }
   function scheduleBot() {
     clearTimeout(botTimer);
+    const generation = ++botGeneration;
     if (screen !== "game" || !match || document.hidden) return;
     const needsBot = match.phase === "playing" && match.players[match.turn]?.bot || match.phase === "returning" && match.pendingReturns.some((item) => match.players[item.receiver].bot);
     if (!needsBot) return;
-    botTimer = setTimeout(() => {
+    botTimer = setTimeout(async () => {
       if (document.hidden) return;
       try {
+        const currentMatch = match;
         const previousEventCount = match.events.length;
-        if (autoAction(match)) {
+        let acted;
+        if (match.phase === "playing" && match.players[match.turn]?.difficulty === "danzero") {
+          const seat = match.turn;
+          const action = await requestModelAction(viewFor(match, seat));
+          if (generation !== botGeneration || match !== currentMatch || screen !== "game" || document.hidden) return;
+          if (action.pass) pass(match, seat);
+          else play(match, seat, action.cardIds, action.declaration);
+          acted = true;
+        } else {
+          acted = autoAction(match);
+        }
+        if (acted) {
+          modelError = null;
           showBotCue(match.events.slice(previousEventCount));
           save();
           render();
           scheduleBot();
         }
       } catch (error) {
-        inform(error.message || "\u7535\u8111\u51FA\u724C\u9047\u5230\u95EE\u9898");
+        if (generation !== botGeneration) return;
+        modelError = error.message || "\u7535\u8111\u51FA\u724C\u9047\u5230\u95EE\u9898";
+        inform(modelError);
+        render();
       }
     }, BOT_STEP_DELAY_MS);
   }
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) scheduleBot();
+    if (document.hidden) {
+      clearTimeout(botTimer);
+      botGeneration += 1;
+    } else scheduleBot();
   });
   root.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
@@ -1098,6 +1213,7 @@
       if (action === "home") {
         screen = "home";
         clearTimeout(botTimer);
+        botGeneration += 1;
         clearBotCue();
         save();
         render();
@@ -1105,9 +1221,21 @@
       }
       if (!match) return;
       const view = visible();
+      if (action === "retry-bot") {
+        modelError = null;
+        render();
+        scheduleBot();
+        return;
+      }
       if (action === "card") {
         const id = button.dataset.id;
         selected.has(id) ? selected.delete(id) : selected.add(id);
+        selectedDeclarationKey = null;
+        render();
+        return;
+      }
+      if (action === "declaration") {
+        selectedDeclarationKey = button.dataset.key;
         render();
         return;
       }
@@ -1124,7 +1252,7 @@
         return;
       }
       if (action === "play") {
-        play(match, 0, [...selected]);
+        play(match, 0, [...selected], currentMove(view).move);
         afterAction();
         return;
       }
@@ -1174,6 +1302,7 @@
           inform("\u5EFA\u8BAE\u8FC7\u724C\uFF1B\u8BF7\u70B9\u51FB\u724C\u684C\u4E0B\u65B9\u7684\u201C\u8FC7\u724C\u201D\u786E\u8BA4\u3002");
         } else {
           selected = new Set(choice.cardIds);
+          selectedDeclarationKey = choice.declaration ? moveKey(choice.declaration) : null;
           panel = "advice";
           inform("\u5DF2\u9009\u4E2D\u5EFA\u8BAE\u7684\u724C\uFF0C\u8BF7\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C\u3002");
         }
