@@ -632,6 +632,8 @@
   var { recommend } = require_coach();
   var { openingAnalysis } = require_planner();
   var STORAGE = "guandan-web-solo-v1";
+  var BOT_STEP_DELAY_MS = 1450;
+  var BOT_CUE_DURATION_MS = 1300;
   var root = document.getElementById("app");
   var toast = document.getElementById("toast");
   var match = null;
@@ -644,6 +646,9 @@
   var opening = null;
   var openingHand = null;
   var botTimer = null;
+  var botCueTimer = null;
+  var recentBotAction = null;
+  var botCueFresh = false;
   var toastTimer = null;
   var escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
@@ -673,6 +678,26 @@
   }
   function clearSelection() {
     selected.clear();
+  }
+  function clearBotCue() {
+    clearTimeout(botCueTimer);
+    recentBotAction = null;
+    botCueFresh = false;
+  }
+  function showBotCue(events) {
+    const action = events.find((event) => ["play", "pass", "return"].includes(event.type) && event.seat !== 0);
+    if (!action) return;
+    clearTimeout(botCueTimer);
+    recentBotAction = {
+      seat: action.seat,
+      type: action.type,
+      label: action.type === "play" ? `\u6253\u51FA${TYPE_LABELS[action.move?.type] || "\u4E00\u624B\u724C"}` : action.type === "pass" ? "\u8FC7\u724C" : "\u8FD8\u8D21"
+    };
+    botCueFresh = true;
+    botCueTimer = setTimeout(() => {
+      recentBotAction = null;
+      if (screen === "game") render();
+    }, BOT_CUE_DURATION_MS);
   }
   function visible() {
     return viewFor(match, 0);
@@ -723,7 +748,8 @@
   function playerHTML(view, seat, position) {
     const finished = view.finishOrder.indexOf(seat);
     const active = view.phase === "playing" && view.turn === seat;
-    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
+    const recent = recentBotAction?.seat === seat;
+    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
   }
   function currentMove(view) {
     const cards = view.hand.filter((card) => selected.has(card.id));
@@ -745,11 +771,17 @@
     const half = Math.ceil(ordered.length / 2);
     const advice = recommend(view, 0);
     const lastPlayEvent = view.lastPlay ? [...view.events].reverse().find((item) => item.type === "play" && item.seat === view.lastSeat) : null;
-    const status = view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const cue = recentBotAction;
+    const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
+    const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
+    const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
+    const ordinaryStatus = view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
+    const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
   <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
-  <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 3, "left")}${playerHTML(view, 1, "right")}<div class="table-center"><div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards">${(lastPlayEvent?.cards || []).map((card) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}">${escapeHTML(cardLabel(card))}</span>`).join("")}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
-  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-row" aria-label="\u624B\u724C\u4E0A\u6392">${ordered.slice(0, half).map(cardHTML).join("")}</div><div class="hand-row" aria-label="\u624B\u724C\u4E0B\u6392">${ordered.slice(half).map((card, index) => cardHTML(card, half + index)).join("")}</div><div class="hand-hint">${move.text}</div><div class="action-bar"><div class="turn-status"><span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !move.cards[0] || move.cards[0].rank > 10 ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
+  <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
+  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-row" aria-label="\u624B\u724C\u4E0A\u6392">${ordered.slice(0, half).map(cardHTML).join("")}</div><div class="hand-row" aria-label="\u624B\u724C\u4E0B\u6392">${ordered.slice(half).map((card, index) => cardHTML(card, half + index)).join("")}</div><div class="hand-hint">${move.text}</div><div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !move.cards[0] || move.cards[0].rank > 10 ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(advice, view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
@@ -771,24 +803,29 @@
   function render() {
     const scrollers = [...root.querySelectorAll(".hand-row")].map((el) => el.scrollLeft);
     root.innerHTML = screen === "game" && match ? gameHTML() : homeHTML();
+    botCueFresh = false;
     if (screen === "game") root.querySelectorAll(".hand-row").forEach((el, index) => {
       el.scrollLeft = scrollers[index] || 0;
     });
   }
   function afterAction() {
     clearSelection();
+    clearBotCue();
     save();
     render();
     scheduleBot();
   }
   function scheduleBot() {
     clearTimeout(botTimer);
-    if (screen !== "game" || !match) return;
+    if (screen !== "game" || !match || document.hidden) return;
     const needsBot = match.phase === "playing" && match.players[match.turn]?.bot || match.phase === "returning" && match.pendingReturns.some((item) => match.players[item.receiver].bot);
     if (!needsBot) return;
     botTimer = setTimeout(() => {
+      if (document.hidden) return;
       try {
+        const previousEventCount = match.events.length;
         if (autoAction(match)) {
+          showBotCue(match.events.slice(previousEventCount));
           save();
           render();
           scheduleBot();
@@ -796,8 +833,11 @@
       } catch (error) {
         inform(error.message || "\u7535\u8111\u51FA\u724C\u9047\u5230\u95EE\u9898");
       }
-    }, 320);
+    }, BOT_STEP_DELAY_MS);
   }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) scheduleBot();
+  });
   root.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
     if (!button || button.disabled) return;
@@ -816,6 +856,7 @@
       if (action === "continue") {
         const saved = savedGame();
         if (!saved) return;
+        clearBotCue();
         match = saved.match;
         cardOrder = saved.cardOrder || [];
         openingHand = null;
@@ -827,6 +868,7 @@
       if (action === "home") {
         screen = "home";
         clearTimeout(botTimer);
+        clearBotCue();
         save();
         render();
         return;
