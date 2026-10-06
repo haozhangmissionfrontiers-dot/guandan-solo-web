@@ -8,6 +8,14 @@
 @media(max-width:370px){.wordmark span{display:none}.player-info span{display:none}.score-divider span{display:none}.score-divider{height:27px}.action-buttons .button{padding:0 9px}}
 
 /* A bot's move is a short, readable event rather than an instant table replacement. */
+.bot-settings{width:min(100%,460px);padding:15px;border:1px solid rgba(228,207,155,.36);border-radius:12px;background:rgba(255,255,255,.055)}
+.bot-settings>span{display:block;color:#f0d9a3;font-size:12px;font-weight:700;margin-bottom:10px}
+.bot-settings>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bot-choice{display:flex;flex-direction:column;gap:6px;min-width:0;color:#d5e4d9;font-size:11px}
+.bot-choice select{width:100%;min-height:40px;border:1px solid #82a397;border-radius:8px;background:#194b3e;color:#fff;padding:0 8px}
+.bot-settings small{display:block;color:#adc9b6;font-size:10px;line-height:1.5;margin-top:9px}
+.player-info strong small{font-size:10px;color:#f0d493;font-weight:600}
+@media(max-width:370px){.bot-settings>div{grid-template-columns:1fr}.bot-choice{flex-direction:row;align-items:center;justify-content:space-between}}
 .player.recent .avatar{outline:2px solid #f1d58d;outline-offset:3px}
 .player.cue-fresh .avatar{animation:actor-signal 430ms cubic-bezier(.25,1,.5,1) both}
 .action-cue{display:inline-flex;align-items:center;gap:7px;max-width:100%;margin:0 auto 11px;padding:7px 12px;border:1px solid #e2c789;border-radius:99px;background:#fbf6e8;color:#235344;font-size:12px;font-weight:800;white-space:nowrap;box-shadow:0 6px 16px rgba(0,37,28,.13)}

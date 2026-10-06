@@ -290,12 +290,245 @@
     }
   });
 
+  // miniprogram/lib/bot.js
+  var require_bot = __commonJS({
+    "miniprogram/lib/bot.js"(exports, module) {
+      var { createDeck, rankPower } = require_cards();
+      var { legalMoves, beats: beats2, classify: classify2 } = require_rules();
+      var DIFFICULTIES = ["simple", "hard1", "hard2"];
+      var teamOf = (seat) => seat % 2;
+      var partnerOf = (seat) => (seat + 2) % 4;
+      function simpleAction(view) {
+        const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
+        if (view.lastPlay && view.lastSeat !== null && teamOf(view.lastSeat) === teamOf(view.turn)) return { pass: true };
+        if (!moves.length) return { pass: true };
+        moves.sort((a, b) => a.tier - b.tier || b.size - a.size || a.power - b.power);
+        return { pass: false, cardIds: moves[0].cards.map((card) => card.id) };
+      }
+      function handQuality(hand, level) {
+        const counts = /* @__PURE__ */ new Map();
+        let control = 0;
+        for (const card of hand) {
+          counts.set(card.rank, (counts.get(card.rank) || 0) + 1);
+          const power = rankPower(card.rank, level);
+          if (power >= 15) control += 0.75;
+          else if (power >= 13) control += 0.35;
+        }
+        let groups = 0;
+        for (const count of counts.values()) {
+          if (count >= 2) groups += Math.min(count - 1, 3) * 0.65;
+          if (count >= 4) groups += 1.4;
+        }
+        let runs = 0;
+        for (let start = 2; start <= 10; start += 1) {
+          let distinct = 0;
+          let pairs = 0;
+          for (let rank = start; rank < start + 5; rank += 1) {
+            if (counts.get(rank)) distinct += 1;
+            if (counts.get(rank) >= 2) pairs += 1;
+          }
+          runs = Math.max(runs, distinct >= 4 ? distinct * 0.35 : 0);
+          if (pairs >= 3) runs += 0.35;
+        }
+        return -hand.length * 2.3 + groups + runs + control;
+      }
+      function scoreAction(view, action) {
+        const seat = view.turn;
+        const partner = partnerOf(seat);
+        const partnerLed = view.lastPlay && view.lastSeat !== null && teamOf(view.lastSeat) === teamOf(seat);
+        const opponents = [0, 1, 2, 3].filter((other) => teamOf(other) !== teamOf(seat) && !view.finishOrder.includes(other));
+        const danger = opponents.length ? Math.min(...opponents.map((other) => view.handCounts[other])) : 27;
+        const teammateFinished = view.finishOrder.includes(partner);
+        if (action.pass) {
+          if (!view.lastPlay) return -Infinity;
+          if (partnerLed) return 18 + (view.handCounts[partner] <= 5 ? 10 : 0);
+          return danger <= 2 ? -22 : danger <= 5 ? -9 : 0;
+        }
+        const move = action.move;
+        const used = new Set(action.cardIds);
+        const remaining = view.hand.filter((card) => !used.has(card.id));
+        if (!remaining.length) {
+          const first = view.finishOrder[0];
+          return 100 + (first === partner ? 50 : 0) + (view.levels[teamOf(seat)] === 14 ? 15 : 0);
+        }
+        let score = handQuality(remaining, view.levelRank) - handQuality(view.hand, view.levelRank);
+        score -= move.power * 0.17;
+        if (move.tier > 0) score -= 9 + move.tier * 1.4;
+        if (partnerLed) score -= 35 + (view.handCounts[partner] <= 5 ? 10 : 0);
+        if (view.lastPlay && !partnerLed && danger <= 5) score += 11 + (5 - danger) * 3;
+        if (view.lastPlay && !partnerLed && danger <= 2 && move.tier > 0) score += 9;
+        if (teammateFinished && view.finishOrder[0] === partner) score += move.size * 1.5;
+        return score;
+      }
+      function rankedActions(view) {
+        const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
+        const choices = moves.map((move) => ({ pass: false, cardIds: move.cards.map((card) => card.id), move }));
+        if (view.lastPlay) choices.push({ pass: true });
+        for (const action of choices) action.score = scoreAction(view, action);
+        choices.sort((a, b) => b.score - a.score || (a.pass ? 1 : 0) - (b.pass ? 1 : 0) || (a.move?.power || 0) - (b.move?.power || 0));
+        return choices;
+      }
+      function hard1Action(view) {
+        const choice = rankedActions(view)[0];
+        return choice ? { pass: choice.pass, cardIds: choice.cardIds } : { pass: true };
+      }
+      function chooseReturnCard(view, difficulty = "simple") {
+        const eligible = view.hand.filter((card) => card.rank <= 10);
+        if (difficulty === "simple") return eligible.sort((a, b) => rankPower(a.rank, view.levelRank) - rankPower(b.rank, view.levelRank))[0];
+        return eligible.sort((a, b) => {
+          const aQuality = handQuality(view.hand.filter((card) => card.id !== a.id), view.levelRank) - rankPower(a.rank, view.levelRank) * 0.15;
+          const bQuality = handQuality(view.hand.filter((card) => card.id !== b.id), view.levelRank) - rankPower(b.rank, view.levelRank) * 0.15;
+          return bQuality - aQuality || rankPower(a.rank, view.levelRank) - rankPower(b.rank, view.levelRank);
+        })[0];
+      }
+      function unseenCards(view) {
+        const known = new Set(view.hand.map((card) => card.id));
+        for (const event of view.events) {
+          if (event.handNumber === view.handNumber && event.type === "play") {
+            for (const card of event.cards || []) known.add(card.id);
+          }
+        }
+        return createDeck().filter((card) => !known.has(card.id));
+      }
+      function seededRandom(view) {
+        let value = view.events.length * 2654435761 + view.turn * 1013904223 + view.handNumber * 1664525 >>> 0;
+        for (const card of view.hand) value = Math.imul(value ^ card.rank, 1664525) + card.id.charCodeAt(0) >>> 0;
+        return () => {
+          value = Math.imul(value, 1664525) + 1013904223 >>> 0;
+          return value / 2 ** 32;
+        };
+      }
+      function sampleHands(view, pool, random) {
+        const shuffled = pool.slice();
+        for (let i = shuffled.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        const hands = [[], [], [], []];
+        hands[view.turn] = view.hand.slice();
+        let at = 0;
+        for (let seat = 0; seat < 4; seat += 1) {
+          if (seat === view.turn) continue;
+          hands[seat] = shuffled.slice(at, at + view.handCounts[seat]);
+          at += view.handCounts[seat];
+        }
+        return hands;
+      }
+      function nextActive(finished, seat) {
+        for (let step = 1; step <= 4; step += 1) {
+          const next = (seat + step) % 4;
+          if (!finished.includes(next)) return next;
+        }
+        return null;
+      }
+      function sampledHandOutcome(view, action, hands) {
+        const seat = view.turn;
+        const finished = view.finishOrder.slice();
+        let lastPlay = view.lastPlay;
+        let lastSeat = view.lastSeat;
+        let passes = view.passes || 0;
+        let turn = seat;
+        for (let step = 0; step < 180; step += 1) {
+          const current = step === 0 ? action : chooseBotAction({
+            ...view,
+            turn,
+            hand: hands[turn],
+            handCounts: hands.map((hand) => hand.length),
+            lastPlay,
+            lastSeat,
+            passes,
+            finishOrder: finished
+          }, view.players[turn]?.difficulty === "simple" ? "simple" : "hard1");
+          if (current.pass) {
+            passes += 1;
+            const active = 4 - finished.length;
+            const needed = active - (finished.includes(lastSeat) ? 0 : 1);
+            if (passes >= needed) {
+              const lead = finished.includes(lastSeat) ? partnerOf(lastSeat) : lastSeat;
+              turn = finished.includes(lead) ? nextActive(finished, lead) : lead;
+              lastPlay = null;
+              lastSeat = null;
+              passes = 0;
+              continue;
+            }
+          } else {
+            const move = step === 0 ? action.move : classify2(hands[turn].filter((card) => current.cardIds.includes(card.id)), view.levelRank);
+            if (!move || !beats2(move, lastPlay)) return 0;
+            const used = new Set(current.cardIds);
+            hands[turn] = hands[turn].filter((card) => !used.has(card.id));
+            lastPlay = move;
+            lastSeat = turn;
+            passes = 0;
+            if (!hands[turn].length) {
+              finished.push(turn);
+              if (finished.length >= 3 || finished.length === 2 && teamOf(finished[0]) === teamOf(finished[1])) {
+                const first = finished[0];
+                const partnerPlace = finished.includes(partnerOf(first)) ? finished.indexOf(partnerOf(first)) + 1 : 4;
+                const climb = partnerPlace === 2 ? 3 : partnerPlace === 3 ? 2 : 1;
+                return teamOf(first) === teamOf(seat) ? climb : -climb;
+              }
+            }
+          }
+          turn = nextActive(finished, turn);
+        }
+        return 0;
+      }
+      function hard2Action(view) {
+        const ranked = rankedActions(view);
+        if (ranked.length <= 1 || !view.hand.length) return hard1Action(view);
+        if (view.handCounts.reduce((sum, count) => sum + count, 0) > 42) {
+          return { pass: ranked[0].pass, cardIds: ranked[0].cardIds };
+        }
+        const shortlist = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const action of ranked) {
+          const key = action.pass ? "pass" : `${action.move.type}:${action.move.power}:${action.move.size}:${action.move.tier}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          shortlist.push(action);
+          if (shortlist.length === 4) break;
+        }
+        const bestBomb = ranked.find((action) => action.move?.tier > 0);
+        if (bestBomb && !shortlist.includes(bestBomb)) shortlist.push(bestBomb);
+        const passOption = ranked.find((action) => action.pass);
+        if (passOption && !shortlist.includes(passOption)) shortlist.push(passOption);
+        if (shortlist.length === 1) return { pass: shortlist[0].pass, cardIds: shortlist[0].cardIds };
+        const pool = unseenCards(view);
+        const random = seededRandom(view);
+        const worlds = Array.from({ length: 8 }, () => sampleHands(view, pool, random));
+        let best = shortlist[0];
+        let bestScore = -Infinity;
+        for (const action of shortlist) {
+          if (action.score < ranked[0].score - 1.5) continue;
+          let future = 0;
+          for (const world of worlds) {
+            const hands = world.map((hand) => hand.slice());
+            future += sampledHandOutcome(view, action, hands);
+          }
+          const score = action.score + future / worlds.length * 3;
+          if (score > bestScore) {
+            bestScore = score;
+            best = action;
+          }
+        }
+        return { pass: best.pass, cardIds: best.cardIds };
+      }
+      function chooseBotAction(view, difficulty = "simple") {
+        if (difficulty === "hard2") return hard2Action(view);
+        if (difficulty === "hard1") return hard1Action(view);
+        return simpleAction(view);
+      }
+      module.exports = { DIFFICULTIES, chooseBotAction, chooseReturnCard, simpleAction, hard1Action, hard2Action, unseenCards };
+    }
+  });
+
   // miniprogram/lib/match.js
   var require_match = __commonJS({
     "miniprogram/lib/match.js"(exports, module) {
       var { createDeck, shuffle, sortCards: sortCards2, rankPower, cardLabel: cardLabel2 } = require_cards();
-      var { classify: classify2, beats: beats2, legalMoves } = require_rules();
+      var { classify: classify2, beats: beats2 } = require_rules();
       var { recommend: recommend2 } = require_coach();
+      var { DIFFICULTIES, chooseBotAction, chooseReturnCard } = require_bot();
       function teamOf(seat) {
         return seat % 2;
       }
@@ -321,7 +554,7 @@
       function createMatch2(players, random = Math.random) {
         if (!Array.isArray(players) || players.length !== 4) throw new Error("\u4E00\u684C\u5FC5\u987B\u6709\u56DB\u4E2A\u5EA7\u4F4D");
         const state = {
-          players: players.map((player, seat) => ({ id: player.id, name: player.name, bot: !!player.bot, seat })),
+          players: players.map((player, seat) => ({ id: player.id, name: player.name, bot: !!player.bot, difficulty: player.bot ? DIFFICULTIES.includes(player.difficulty) ? player.difficulty : "simple" : null, seat })),
           levels: [2, 2],
           levelRank: 2,
           handNumber: 0,
@@ -434,6 +667,7 @@
         }
       }
       function recordDecision(state, seat) {
+        if (state.captureReviews === false) return;
         state.decisionSnapshots.push({
           seat,
           handNumber: state.handNumber,
@@ -506,24 +740,16 @@
         if (state.phase === "returning") {
           const pending = state.pendingReturns.find((item) => state.players[item.receiver].bot);
           if (!pending) return false;
-          const options = state.hands[pending.receiver].filter((card) => card.rank <= 10).sort((a, b) => rankPower(a.rank, state.levelRank) - rankPower(b.rank, state.levelRank));
-          if (!options.length) throw new Error("\u7535\u8111\u73A9\u5BB6\u6CA1\u6709\u5408\u6CD5\u8FD8\u8D21\u724C");
-          returnTribute2(state, pending.receiver, options[0].id);
+          const choice = chooseReturnCard(viewFor2(state, pending.receiver), state.players[pending.receiver].difficulty);
+          if (!choice) throw new Error("\u7535\u8111\u73A9\u5BB6\u6CA1\u6709\u5408\u6CD5\u8FD8\u8D21\u724C");
+          returnTribute2(state, pending.receiver, choice.id);
           return true;
         }
         if (state.phase !== "playing" || !state.players[state.turn].bot) return false;
         const seat = state.turn;
-        const moves = legalMoves(state.hands[seat], state.levelRank, state.lastPlay);
-        if (state.lastPlay && state.lastSeat !== null && teamOf(state.lastSeat) === teamOf(seat)) {
-          pass2(state, seat);
-          return true;
-        }
-        if (!moves.length) {
-          pass2(state, seat);
-          return true;
-        }
-        moves.sort((a, b) => a.tier - b.tier || b.size - a.size || a.power - b.power);
-        play2(state, seat, moves[0].cards.map((card) => card.id));
+        const action = chooseBotAction(viewFor2(state, seat), state.players[seat].difficulty);
+        if (action.pass) pass2(state, seat);
+        else play2(state, seat, action.cardIds);
         return true;
       }
       function viewFor2(state, seat) {
@@ -534,6 +760,7 @@
           handNumber: state.handNumber,
           phase: state.phase,
           turn: state.turn,
+          passes: state.passes,
           hand: seat === null ? [] : sortCards2(state.hands[seat], state.levelRank),
           handCounts: state.hands.map((hand) => hand.length),
           lastPlay: state.lastPlay,
@@ -654,6 +881,7 @@
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
   var seatTone = (seat) => seat % 2 === 0 ? "ally" : "rival";
+  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C" };
   function inform(message) {
     toast.textContent = message;
     toast.classList.add("show");
@@ -738,10 +966,11 @@
   }
   function homeHTML() {
     const saved = savedGame();
+    const botChoice = (seat, label) => `<label class="bot-choice" for="bot-difficulty-${seat}"><span>${label}</span><select id="bot-difficulty-${seat}" aria-label="${label}\u96BE\u5EA6">${Object.entries(difficultyName).map(([id, name]) => `<option value="${id}" ${saved?.match?.players?.[seat]?.difficulty === id ? "selected" : ""}>${name}</option>`).join("")}</select></label>`;
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u518D\u63A8\u6F14\u672A\u77E5\u624B\u724C\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -749,7 +978,7 @@
     const finished = view.finishOrder.indexOf(seat);
     const active = view.phase === "playing" && view.turn === seat;
     const recent = recentBotAction?.seat === seat;
-    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
+    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)} <small>\xB7 ${difficultyName[view.players[seat].difficulty] || "\u7B80\u5355"}</small></strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
   }
   function currentMove(view) {
     const cards = view.hand.filter((card) => selected.has(card.id));
@@ -845,7 +1074,8 @@
     try {
       if (action === "new") {
         const name = document.getElementById("player-name")?.value.trim().slice(0, 12) || "\u5C0F\u724C\u624B";
-        match = createMatch([{ id: "you", name, bot: false }, { id: "left", name: "\u963F\u5DE6", bot: true }, { id: "partner", name: "\u642D\u5B50", bot: true }, { id: "right", name: "\u963F\u53F3", bot: true }]);
+        const difficulty = (seat) => document.getElementById(`bot-difficulty-${seat}`)?.value || "simple";
+        match = createMatch([{ id: "you", name, bot: false }, { id: "left", name: "\u963F\u5DE6", bot: true, difficulty: difficulty(1) }, { id: "partner", name: "\u642D\u5B50", bot: true, difficulty: difficulty(2) }, { id: "right", name: "\u963F\u53F3", bot: true, difficulty: difficulty(3) }]);
         cardOrder = [];
         openingHand = null;
         panel = "plans";
