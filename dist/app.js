@@ -553,7 +553,7 @@
         return { pass: best.pass, cardIds: best.cardIds, declaration: best.move && declarationOf(best.move) };
       }
       function chooseBotAction(view, difficulty = "simple") {
-        if (difficulty === "danzero") throw new Error("DanZero \u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B Worker\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
+        if (difficulty === "danzero") throw new Error("\u96BE\u5EA6\u4E09\u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B\u7EBF\u7A0B\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
         if (difficulty === "hard2") return hard2Action(view);
         if (difficulty === "hard1") return hard1Action(view);
         return simpleAction(view);
@@ -897,12 +897,47 @@
     }
   });
 
+  // web/danzero-review.js
+  var require_danzero_review = __commonJS({
+    "web/danzero-review.js"(exports, module) {
+      function reviewView2(review, currentView) {
+        if (!review || !Array.isArray(review.handAtTime) || !Array.isArray(review.handCountsAtTime)) return null;
+        const events = (currentView.events || []).filter((event) => event.number < review.eventNumber);
+        const deal = events.find((event) => event.type === "deal" && event.handNumber === review.handNumber);
+        if (!deal) return null;
+        const previousEnd = [...events].reverse().find((event) => event.type === "handEnd");
+        const levels = previousEnd?.levels || [2, 2];
+        const finishOrder = events.filter((event) => event.handNumber === review.handNumber && event.type === "finish").map((event) => event.seat);
+        return {
+          turn: 0,
+          handNumber: review.handNumber,
+          hand: review.handAtTime,
+          handCounts: review.handCountsAtTime,
+          levelRank: deal.level,
+          levels,
+          lastPlay: review.lastPlayAtTime,
+          finishOrder,
+          events
+        };
+      }
+      function reviewActual2(review, currentView) {
+        const event = (currentView.events || []).find((item) => item.number === review.eventNumber);
+        if (!event || event.seat !== 0) return null;
+        if (event.type === "pass") return { pass: true };
+        if (event.type === "play" && Array.isArray(event.cards)) return { pass: false, cardIds: event.cards.map((card) => card.id) };
+        return null;
+      }
+      module.exports = { reviewView: reviewView2, reviewActual: reviewActual2 };
+    }
+  });
+
   // web/app.js
   var { createMatch, startNextHand, returnTribute, play, pass, autoAction, viewFor } = require_match();
   var { cardLabel, sortCards, legalReturnCards } = require_cards();
   var { classifyOptions, moveKey, beats, TYPE_LABELS } = require_rules();
   var { recommend } = require_coach();
   var { openingAnalysis } = require_planner();
+  var { reviewView, reviewActual } = require_danzero_review();
   var STORAGE = "guandan-web-solo-v1";
   var BOT_STEP_DELAY_MS = 1450;
   var BOT_CUE_DURATION_MS = 1300;
@@ -927,49 +962,57 @@
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
   var seatTone = (seat) => seat % 2 === 0 ? "ally" : "rival";
-  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09 \xB7 DanZero" };
+  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09" };
   var danzeroWorker = null;
   var modelRequestNumber = 0;
   var botGeneration = 0;
   var modelError = null;
   var pendingModelRequests = /* @__PURE__ */ new Map();
+  var liveModelAnalysis = null;
+  var reviewModelAnalysis = /* @__PURE__ */ new Map();
+  function stopModelWorker(message) {
+    for (const pending of pendingModelRequests.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(message));
+    }
+    pendingModelRequests.clear();
+    danzeroWorker?.terminate();
+    danzeroWorker = null;
+  }
   function modelWorker() {
     if (danzeroWorker) return danzeroWorker;
     if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u96BE\u5EA6\u4E09\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
-    const worker = new Worker(new URL("./dist/danzero-worker.js?v=20261007", document.baseURI));
+    const worker = new Worker(new URL("./dist/danzero-worker.js?v=20261007-assist", document.baseURI));
     worker.onmessage = (event) => {
       const pending = pendingModelRequests.get(event.data.id);
       if (!pending) return;
       pendingModelRequests.delete(event.data.id);
       clearTimeout(pending.timer);
       if (event.data.error) pending.reject(new Error(event.data.error));
-      else pending.resolve(event.data.action);
+      else pending.resolve(event.data.analysis ?? event.data.action);
     };
     worker.onerror = () => {
-      for (const pending of pendingModelRequests.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(new Error("DanZero \u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8"));
-      }
-      pendingModelRequests.clear();
-      worker.terminate();
-      if (danzeroWorker === worker) danzeroWorker = null;
+      if (danzeroWorker === worker) stopModelWorker("\u96BE\u5EA6\u4E09\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8");
     };
     danzeroWorker = worker;
     return worker;
   }
-  function requestModelAction(view) {
+  function requestModel(mode, view, actual = null) {
     return new Promise((resolve, reject) => {
       const worker = modelWorker();
       const id = ++modelRequestNumber;
       const timer = setTimeout(() => {
-        pendingModelRequests.delete(id);
-        worker.terminate();
-        if (danzeroWorker === worker) danzeroWorker = null;
-        reject(new Error("DanZero \u601D\u8003\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5"));
+        if (danzeroWorker === worker) stopModelWorker("\u96BE\u5EA6\u4E09\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5");
       }, 9e4);
       pendingModelRequests.set(id, { resolve, reject, timer });
-      worker.postMessage({ id, view });
+      worker.postMessage({ id, mode, view, actual });
     });
+  }
+  function requestModelAction(view) {
+    return requestModel("action", view);
+  }
+  function requestModelAnalysis(view, actual = null) {
+    return requestModel("analysis", view, actual);
   }
   function inform(message) {
     toast.textContent = message;
@@ -1020,6 +1063,63 @@
   function visible() {
     return viewFor(match, 0);
   }
+  function currentDecisionKey(view) {
+    return `${view.handNumber}:${view.events.length}`;
+  }
+  function resetModelAssistance() {
+    liveModelAnalysis = null;
+    reviewModelAnalysis = /* @__PURE__ */ new Map();
+  }
+  function ensureModelAssistance() {
+    if (screen !== "game" || !match || document.hidden) return;
+    const view = visible();
+    const currentMatch = match;
+    if (panel === "advice" && view.phase === "playing" && view.turn === 0) {
+      const key = currentDecisionKey(view);
+      if (liveModelAnalysis?.key === key) return;
+      liveModelAnalysis = { key, status: "loading" };
+      requestModelAnalysis(view).then((result) => {
+        if (match !== currentMatch || liveModelAnalysis?.key !== key) return;
+        liveModelAnalysis = { key, status: "ready", result };
+        if (screen === "game" && panel === "advice") render();
+      }).catch((error) => {
+        if (match !== currentMatch || liveModelAnalysis?.key !== key) return;
+        liveModelAnalysis = { key, status: "error", error: error.message };
+        if (screen === "game" && panel === "advice") render();
+      });
+    }
+    if (panel === "history" && reviewNumber != null && !reviewModelAnalysis.has(reviewNumber)) {
+      const review = view.reviews.find((item) => item.eventNumber === reviewNumber);
+      if (!review) return;
+      const pastView = reviewView(review, view);
+      const actual = reviewActual(review, view);
+      if (!pastView || !actual) {
+        reviewModelAnalysis.set(reviewNumber, { status: "unavailable" });
+        render();
+        return;
+      }
+      const number = reviewNumber;
+      reviewModelAnalysis.set(number, { status: "loading" });
+      requestModelAnalysis(pastView, actual).then((result) => {
+        if (match !== currentMatch) return;
+        reviewModelAnalysis.set(number, { status: "ready", result });
+        if (screen === "game" && panel === "history" && reviewNumber === number) render();
+      }).catch((error) => {
+        if (match !== currentMatch) return;
+        reviewModelAnalysis.set(number, { status: "error", error: error.message });
+        if (screen === "game" && panel === "history" && reviewNumber === number) render();
+      });
+    }
+  }
+  function modelActionLabel(choice, hand) {
+    if (choice.pass) return "\u8FC7\u724C";
+    const byId = new Map(hand.map((card) => [card.id, card]));
+    const cards = choice.cardIds.map((id) => byId.get(id)).filter(Boolean);
+    return `${TYPE_LABELS[choice.declaration?.type] || "\u51FA\u724C"} \xB7 ${cards.map(cardLabel).join(" ")}`;
+  }
+  function modelScore(score) {
+    return Number(score).toFixed(2);
+  }
   function syncOrder(view) {
     const ids = new Set(view.hand.map((card) => card.id));
     cardOrder = cardOrder.filter((id) => ids.has(id));
@@ -1060,7 +1160,7 @@
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u7528\u672C\u5730 DanZero \u6A21\u578B\uFF0C\u9996\u6B21\u4F7F\u7528\u9700\u4E0B\u8F7D\u7EA6 5 MB\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u7528\u672C\u5730\u6A21\u578B\uFF0C\u4E5F\u4F1A\u8F85\u52A9\u4F60\u7684\u51FA\u724C\u5EFA\u8BAE\u4E0E\u590D\u76D8\uFF0C\u9996\u6B21\u4F7F\u7528\u9700\u4E0B\u8F7D\u7EA6 5 MB\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -1111,14 +1211,30 @@
     const chosen = analysis.plans.find((item) => item.id === planId) || analysis.plans[0];
     return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">START WITH A PLAN</span><h2>\u5148\u770B\u6574\u624B\u724C\u3002</h2><p>\u8FD9\u4E9B\u662F\u7406\u724C\u601D\u8DEF\uFF0C\u4E0D\u662F\u552F\u4E00\u6B63\u786E\u7B54\u6848\u3002\u6839\u636E\u5C40\u9762\u968F\u65F6\u8C03\u6574\u3002</p></div>${analysis.highlights.length ? `<div class="highlights"><strong>\u8D77\u624B\u770B\u70B9</strong><div>${analysis.highlights.slice(0, 4).map((item) => `<span class="highlight-chip">${escapeHTML(item.label)} \xB7 ${escapeHTML(item.text)}</span>`).join("")}</div></div>` : ""}<div class="plan-choices">${analysis.plans.map((item, index) => `<button class="plan-choice ${chosen?.id === item.id ? "active" : ""}" data-action="plan" data-id="${escapeHTML(item.id)}"><span class="plan-count">0${index + 1}</span><span><strong>${escapeHTML(item.title)}</strong><small>${escapeHTML(item.description)}</small></span><span class="plan-arrow">\u2197</span></button>`).join("")}</div>${chosen ? `<div class="plan-detail"><div class="detail-head"><strong>${escapeHTML(chosen.title)}</strong><span>\u9884\u8BA1 ${chosen.handCount} \u624B</span></div><div class="plan-groups">${chosen.groups.slice(0, 12).map((group, index) => `<div><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHTML(group.label)}</strong><em>${escapeHTML(group.text)}</em></div>`).join("")}</div><button class="button outline full" data-action="apply-plan" data-id="${escapeHTML(chosen.id)}">\u6309\u8FD9\u6761\u724C\u8DEF\u7406\u724C</button></div>` : ""}<p class="panel-footnote">\u53EA\u5206\u6790\u4F60\u7684\u624B\u724C\u3002\u724C\u8DEF\u4E0D\u662F\u627F\u8BFA\uFF0C\u5176\u4ED6\u73A9\u5BB6\u624B\u724C\u59CB\u7EC8\u4FDD\u5BC6\u3002</p></div>`;
   }
+  function modelAdviceHTML(view) {
+    const state = liveModelAnalysis?.key === currentDecisionKey(view) ? liveModelAnalysis : null;
+    if (!state || state.status === "loading") return '<div class="model-assist"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE</strong><p>\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026</p></div>';
+    if (state.status === "error") return `<div class="model-assist"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
+    return `<div class="model-assist"><div class="model-assist-head"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE</strong><span>${state.result.candidateCount} \u79CD\u5019\u9009</span></div><div class="model-choices">${state.result.choices.map((choice, index) => `<button class="model-choice" data-action="model-advice" data-index="${index}"><span>\u6A21\u578B\u7B2C ${index + 1} \u9009 \xB7 \u8BC4\u5206 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, view.hand))}</strong><small>${choice.pass ? "\u70B9\u6B64\u67E5\u770B\uFF0C\u518D\u7531\u4F60\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u6B64\u9009\u4E2D\u724C\uFF0C\u51FA\u724C\u4ECD\u7531\u4F60\u786E\u8BA4"} \u2192</small></button>`).join("")}</div><p class="model-caveat">\u8BC4\u5206\u53EA\u7528\u4E8E\u6BD4\u8F83\u5F53\u524D\u5019\u9009\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u6A21\u578B\u4E0D\u4F1A\u76F4\u63A5\u89E3\u91CA\u539F\u56E0\u3002\u4E0B\u65B9\u6587\u5B57\u5EFA\u8BAE\u662F\u72EC\u7ACB\u7684\u89C4\u5219\u5206\u6790\uFF0C\u53EF\u7528\u6765\u5BF9\u7167\u601D\u8DEF\u3002</p></div>`;
+  }
   function adviceHTML(advice, view) {
     const active = view.phase === "playing" && view.turn === 0;
-    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">A SECOND OPINION</span><h2>\u8FD9\u4E00\u624B\uFF0C\u600E\u4E48\u60F3\uFF1F</h2><p>\u5EFA\u8BAE\u53EA\u57FA\u4E8E\u4F60\u7684\u624B\u724C\u4E0E\u684C\u9762\u516C\u5F00\u4FE1\u606F\uFF0C\u91CD\u89C6\u961F\u53CB\u548C\u6574\u961F\u7ED3\u679C\u3002</p></div>${active ? `<div class="advice-list">${advice.actions.map((item, index) => `<button class="advice-card" data-action="advice" data-index="${index}"><span class="advice-number">\u5EFA\u8BAE 0${index + 1}</span><strong>${escapeHTML(item.label)}</strong><span>${escapeHTML(item.reason)}</span><small>${item.pass ? "\u70B9\u51FB\u540E\u4ECD\u9700\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u51FB\u9009\u4E2D\u624B\u724C\uFF0C\u4ECD\u9700\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C"} \u2192</small></button>`).join("")}</div>` : `<div class="empty-note"><span>\u25CC</span><strong>\u7B49\u8F6E\u5230\u4F60\uFF0C\u518D\u770B\u5EFA\u8BAE</strong><p>\u4F60\u53EF\u4EE5\u5148\u770B\u770B\u5F00\u5C40\u724C\u8DEF\uFF0C\u6216\u7FFB\u7FFB\u5DF2\u7ECF\u53D1\u751F\u7684\u51FA\u724C\u8BB0\u5F55\u3002</p></div>`}<p class="panel-footnote">${escapeHTML(advice.note)}</p></div>`;
+    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">A SECOND OPINION</span><h2>\u8FD9\u4E00\u624B\uFF0C\u600E\u4E48\u60F3\uFF1F</h2><p>\u53EA\u7528\u4F60\u7684\u624B\u724C\u4E0E\u5F53\u65F6\u516C\u5F00\u4FE1\u606F\uFF0C\u96BE\u5EA6\u4E09\u6A21\u578B\u548C\u89C4\u5219\u5206\u6790\u5404\u7ED9\u4E00\u4E2A\u89C6\u89D2\u3002</p></div>${active ? `${modelAdviceHTML(view)}<div class="advice-list"><h3>\u89C4\u5219\u5206\u6790 \xB7 \u51FA\u724C\u601D\u8DEF</h3>${advice.actions.map((item, index) => `<button class="advice-card" data-action="advice" data-index="${index}"><span class="advice-number">\u601D\u8DEF 0${index + 1}</span><strong>${escapeHTML(item.label)}</strong><span>${escapeHTML(item.reason)}</span><small>${item.pass ? "\u70B9\u51FB\u540E\u4ECD\u9700\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u51FB\u9009\u4E2D\u624B\u724C\uFF0C\u4ECD\u9700\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C"} \u2192</small></button>`).join("")}</div>` : `<div class="empty-note"><span>\u25CC</span><strong>\u7B49\u8F6E\u5230\u4F60\uFF0C\u518D\u770B\u5EFA\u8BAE</strong><p>\u4F60\u53EF\u4EE5\u5148\u770B\u770B\u5F00\u5C40\u724C\u8DEF\uFF0C\u6216\u7FFB\u7FFB\u5DF2\u7ECF\u53D1\u751F\u7684\u51FA\u724C\u8BB0\u5F55\u3002</p></div>`}<p class="panel-footnote">${escapeHTML(advice.note)}</p></div>`;
+  }
+  function modelReviewHTML(review) {
+    const state = reviewModelAnalysis.get(review.eventNumber);
+    if (!state || state.status === "loading") return '<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026</p></div>';
+    if (state.status === "unavailable") return '<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u8FD9\u6B65\u65E7\u8BB0\u5F55\u7F3A\u5C11\u5FC5\u8981\u4FE1\u606F\uFF0C\u65E0\u6CD5\u5B89\u5168\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u3002</p></div>';
+    if (state.status === "error") return `<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
+    const best = state.result.choices[0];
+    const actualScore = state.result.actualScore;
+    const comparison = actualScore == null ? "\u65E0\u6CD5\u4E3A\u4F60\u5F53\u65F6\u7684\u9009\u62E9\u8BA1\u7B97\u6A21\u578B\u5206\u6570\u3002" : !best ? "\u5F53\u65F6\u6CA1\u6709\u53EF\u6BD4\u8F83\u7684\u5019\u9009\u3002" : actualScore > best.score + 0.01 ? "\u4F60\u7684\u5B9E\u9645\u51FA\u724C\u5206\u6570\u66F4\u9AD8\uFF1B\u6A21\u578B\u5019\u9009\u96C6\u53EF\u80FD\u6F0F\u6389\u4E86\u8FD9\u624B\u3002" : actualScore >= best.score - 0.01 ? "\u4F60\u7684\u9009\u62E9\u4E0E\u6A21\u578B\u9996\u9009\u8BC4\u5206\u63A5\u8FD1\u3002" : "\u6A21\u578B\u66F4\u504F\u5411\u4E0B\u5217\u9996\u9009\uFF1B\u53EF\u5BF9\u7167\u5B83\u4E0E\u5B9E\u9645\u51FA\u724C\u7684\u5DEE\u522B\u3002";
+    return `<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u4F60\u7684\u5B9E\u9645\u9009\u62E9\uFF1A${actualScore == null ? "\u672A\u80FD\u8BC4\u5206" : `\u8BC4\u5206 ${modelScore(actualScore)}`}</p><p>${escapeHTML(comparison)}</p><div class="model-review-choices">${state.result.choices.map((choice, index) => `<div><span>\u7B2C ${index + 1} \u9009 \xB7 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, review.handAtTime))}</strong></div>`).join("")}</div><small>\u5206\u6570\u53EA\u6BD4\u8F83\u5F53\u65F6\u7684\u5019\u9009\u52A8\u4F5C\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u6A21\u578B\u4E0D\u80FD\u7ED9\u51FA\u53EF\u9A8C\u8BC1\u7684\u56E0\u679C\u89E3\u91CA\u3002</small></div>`;
   }
   function historyHTML(view) {
     const list = [...view.events].reverse();
     const review = view.reviews.find((item) => item.eventNumber === reviewNumber);
-    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">EVERY MOVE COUNTS</span><h2>\u6574\u573A\uFF0C\u4E00\u773C\u770B\u5B8C\u3002</h2><p>\u6309\u65F6\u95F4\u8BB0\u5F55\u6BCF\u4E00\u6B65\u3002\u6253\u5B8C\u4E00\u526F\u540E\uFF0C\u70B9\u81EA\u5DF1\u7684\u51B3\u7B56\u770B\u5F53\u65F6\u8FD8\u80FD\u600E\u4E48\u6253\u3002</p></div>${review ? `<div class="review-box"><div class="detail-head"><strong>\u7B2C ${review.eventNumber} \u6B65 \xB7 \u590D\u76D8</strong><button class="small-close" data-action="close-review" aria-label="\u5173\u95ED\u590D\u76D8">\xD7</button></div><p>\u5F53\u65F6\u4F60\u6253\u4E86\uFF1A${escapeHTML(review.actualLabel)}</p><p>\u63A8\u8350\uFF1A<strong>${escapeHTML(review.advice?.label || "\u6682\u65E0\u5176\u4ED6\u5EFA\u8BAE")}</strong></p><p>${escapeHTML(review.advice?.reason || review.note)}</p><small>\u53EA\u4F7F\u7528\u5F53\u65F6\u53EF\u89C1\u4FE1\u606F\uFF0C\u4E0D\u5077\u770B\u540E\u7EED\u6216\u4ED6\u4EBA\u624B\u724C\u3002</small></div>` : ""}<ol class="history-list">${list.map((event) => {
+    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">EVERY MOVE COUNTS</span><h2>\u6574\u573A\uFF0C\u4E00\u773C\u770B\u5B8C\u3002</h2><p>\u6309\u65F6\u95F4\u8BB0\u5F55\u6BCF\u4E00\u6B65\u3002\u6253\u5B8C\u4E00\u526F\u540E\uFF0C\u70B9\u81EA\u5DF1\u7684\u51B3\u7B56\u770B\u5F53\u65F6\u8FD8\u80FD\u600E\u4E48\u6253\u3002</p></div>${review ? `<div class="review-box"><div class="detail-head"><strong>\u7B2C ${review.eventNumber} \u6B65 \xB7 \u590D\u76D8</strong><button class="small-close" data-action="close-review" aria-label="\u5173\u95ED\u590D\u76D8">\xD7</button></div><p>\u5F53\u65F6\u4F60\u6253\u4E86\uFF1A${escapeHTML(review.actualLabel)}</p>${modelReviewHTML(review)}<div class="rule-review"><strong>\u89C4\u5219\u5206\u6790\u7684\u6587\u5B57\u601D\u8DEF</strong><p>\u63A8\u8350\uFF1A${escapeHTML(review.advice?.label || "\u6682\u65E0\u5176\u4ED6\u5EFA\u8BAE")}</p><p>${escapeHTML(review.advice?.reason || review.note)}</p></div><small>\u53EA\u4F7F\u7528\u5F53\u65F6\u53EF\u89C1\u4FE1\u606F\uFF0C\u4E0D\u5077\u770B\u540E\u7EED\u6216\u4ED6\u4EBA\u624B\u724C\u3002</small></div>` : ""}<ol class="history-list">${list.map((event) => {
       const canReview = event.seat === 0 && (event.type === "play" || event.type === "pass") && view.reviews.some((item) => item.eventNumber === event.number);
       return `<li><span class="history-number">${String(event.number).padStart(3, "0")}</span><div><strong>${escapeHTML(eventText(event, view))}</strong><small>\u7B2C ${event.handNumber} \u526F</small></div>${canReview ? `<button data-action="review" data-number="${event.number}">\u590D\u76D8 \u2197</button>` : ""}</li>`;
     }).join("")}</ol></div>`;
@@ -1130,6 +1246,7 @@
     if (screen === "game") root.querySelectorAll(".hand-row").forEach((el, index) => {
       el.scrollLeft = scrollers[index] || 0;
     });
+    ensureModelAssistance();
   }
   function afterAction() {
     clearSelection();
@@ -1180,7 +1297,10 @@
     if (document.hidden) {
       clearTimeout(botTimer);
       botGeneration += 1;
-    } else scheduleBot();
+    } else {
+      scheduleBot();
+      ensureModelAssistance();
+    }
   });
   root.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
@@ -1194,6 +1314,8 @@
         cardOrder = [];
         openingHand = null;
         panel = "plans";
+        reviewNumber = null;
+        resetModelAssistance();
         screen = "game";
         afterAction();
         return;
@@ -1205,6 +1327,8 @@
         match = saved.match;
         cardOrder = saved.cardOrder || [];
         openingHand = null;
+        reviewNumber = null;
+        resetModelAssistance();
         screen = "game";
         render();
         scheduleBot();
@@ -1225,6 +1349,12 @@
         modelError = null;
         render();
         scheduleBot();
+        return;
+      }
+      if (action === "model-retry") {
+        if (panel === "advice") liveModelAnalysis = null;
+        if (panel === "history" && reviewNumber != null) reviewModelAnalysis.delete(reviewNumber);
+        render();
         return;
       }
       if (action === "card") {
@@ -1305,6 +1435,21 @@
           selectedDeclarationKey = choice.declaration ? moveKey(choice.declaration) : null;
           panel = "advice";
           inform("\u5DF2\u9009\u4E2D\u5EFA\u8BAE\u7684\u724C\uFF0C\u8BF7\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C\u3002");
+        }
+        render();
+        return;
+      }
+      if (action === "model-advice") {
+        if (view.phase !== "playing" || view.turn !== 0 || liveModelAnalysis?.key !== currentDecisionKey(view) || liveModelAnalysis.status !== "ready") return;
+        const choice = liveModelAnalysis.result.choices[Number(button.dataset.index)];
+        if (!choice) return;
+        if (choice.pass) {
+          clearSelection();
+          inform("\u96BE\u5EA6\u4E09\u5EFA\u8BAE\u8FC7\u724C\uFF1B\u8BF7\u70B9\u51FB\u724C\u684C\u4E0B\u65B9\u7684\u201C\u8FC7\u724C\u201D\u786E\u8BA4\u3002");
+        } else {
+          selected = new Set(choice.cardIds);
+          selectedDeclarationKey = choice.declaration ? moveKey(choice.declaration) : null;
+          inform("\u5DF2\u9009\u4E2D\u96BE\u5EA6\u4E09\u5EFA\u8BAE\u7684\u724C\uFF0C\u8BF7\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C\u3002");
         }
         render();
         return;

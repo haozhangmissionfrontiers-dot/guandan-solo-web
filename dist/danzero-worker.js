@@ -262,7 +262,7 @@
       function cardIndex(card) {
         if (card.rank === 16) return 52;
         if (card.rank === 17) return 53;
-        if (card.rank < 2 || card.rank > 14 || SUIT_INDEX[card.suit] === void 0) throw new Error("DanZero \u6536\u5230\u65E0\u6548\u724C");
+        if (card.rank < 2 || card.rank > 14 || SUIT_INDEX[card.suit] === void 0) throw new Error("\u96BE\u5EA6\u4E09\u6536\u5230\u65E0\u6548\u724C");
         return (card.rank - 2) * 4 + SUIT_INDEX[card.suit];
       }
       function cardCounts(cards) {
@@ -331,13 +331,13 @@
         return result;
       }
       function countOneHot(count) {
-        if (!Number.isInteger(count) || count < 0 || count > 27) throw new Error("DanZero \u73A9\u5BB6\u4F59\u724C\u6570\u5F02\u5E38");
+        if (!Number.isInteger(count) || count < 0 || count > 27) throw new Error("\u96BE\u5EA6\u4E09\u73A9\u5BB6\u4F59\u724C\u6570\u5F02\u5E38");
         const result = new Int8Array(28);
         result[count] = 1;
         return result;
       }
       function rankOneHot(rank) {
-        if (!Number.isInteger(rank) || rank < 2 || rank > 14) throw new Error("DanZero \u7EA7\u6570\u5F02\u5E38");
+        if (!Number.isInteger(rank) || rank < 2 || rank > 14) throw new Error("\u96BE\u5EA6\u4E09\u7EA7\u6570\u5F02\u5E38");
         const result = new Int8Array(13);
         result[rank - 2] = 1;
         return result;
@@ -350,7 +350,7 @@
         const otherHands = new Int8Array(54).fill(2);
         for (let index = 0; index < 54; index += 1) otherHands[index] -= hand[index];
         for (const event of plays) for (const card of event.cards || []) otherHands[cardIndex(card)] -= 1;
-        if (otherHands.some((count) => count < 0 || count > 2)) throw new Error("DanZero \u516C\u5F00\u724C\u8BB0\u5F55\u4E0E\u624B\u724C\u4E0D\u4E00\u81F4");
+        if (otherHands.some((count) => count < 0 || count > 2)) throw new Error("\u96BE\u5EA6\u4E09\u516C\u5F00\u724C\u8BB0\u5F55\u4E0E\u624B\u724C\u4E0D\u4E00\u81F4");
         const partner = (seat + 2) % 4;
         const otherLast = [...events].reverse().find((event) => event.seat !== seat && (event.type === "play" || event.type === "pass"));
         const partnerLast = view.finishOrder.includes(partner) ? null : lastEvent(events, partner);
@@ -381,7 +381,7 @@
           result.set(piece, offset);
           offset += piece.length;
         }
-        if (offset !== result.length) throw new Error("DanZero \u7279\u5F81\u62FC\u63A5\u9519\u8BEF");
+        if (offset !== result.length) throw new Error("\u96BE\u5EA6\u4E09\u7279\u5F81\u62FC\u63A5\u9519\u8BEF");
         return result;
       }
       module.exports = { cardIndex, cardCounts, wildcardFeatures, baseFeatures };
@@ -396,8 +396,8 @@
       var ACTION_WIDTH = 54;
       var FLOATS = DIMS.slice(1).reduce((sum, outputs, layer) => sum + DIMS[layer] * outputs + outputs, 0);
       function modelFromBuffer(buffer) {
-        if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== 4 + FLOATS * 4) throw new Error("DanZero \u6A21\u578B\u6587\u4EF6\u957F\u5EA6\u4E0D\u7B26");
-        if (String.fromCharCode(...new Uint8Array(buffer, 0, 4)) !== "DZQ1") throw new Error("DanZero \u6A21\u578B\u6587\u4EF6\u683C\u5F0F\u4E0D\u7B26");
+        if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== 4 + FLOATS * 4) throw new Error("\u96BE\u5EA6\u4E09\u6A21\u578B\u6587\u4EF6\u957F\u5EA6\u4E0D\u7B26");
+        if (String.fromCharCode(...new Uint8Array(buffer, 0, 4)) !== "DZQ1") throw new Error("\u96BE\u5EA6\u4E09\u6A21\u578B\u6587\u4EF6\u683C\u5F0F\u4E0D\u7B26");
         const flat = new Float32Array(buffer, 4);
         const layers = [];
         let offset = 0;
@@ -413,7 +413,7 @@
         return { layers, scratch: [new Float32Array(512), new Float32Array(512)] };
       }
       function prepareBase(model, features) {
-        if (!features || features.length !== INPUT_PREFIX) throw new Error("DanZero \u8F93\u5165\u7279\u5F81\u957F\u5EA6\u4E0D\u7B26");
+        if (!features || features.length !== INPUT_PREFIX) throw new Error("\u96BE\u5EA6\u4E09\u8F93\u5165\u7279\u5F81\u957F\u5EA6\u4E0D\u7B26");
         const layer = model.layers[0];
         const base = new Float32Array(layer.outputs);
         for (let output = 0; output < layer.outputs; output += 1) {
@@ -425,7 +425,7 @@
         return base;
       }
       function scoreAction(model, base, actionCounts) {
-        if (!actionCounts || actionCounts.length !== ACTION_WIDTH) throw new Error("DanZero \u51FA\u724C\u7279\u5F81\u957F\u5EA6\u4E0D\u7B26");
+        if (!actionCounts || actionCounts.length !== ACTION_WIDTH) throw new Error("\u96BE\u5EA6\u4E09\u51FA\u724C\u7279\u5F81\u957F\u5EA6\u4E0D\u7B26");
         const first = model.layers[0];
         let current = model.scratch[0];
         let next = model.scratch[1];
@@ -463,7 +463,7 @@
       function loadModel() {
         if (!modelPromise) {
           modelPromise = fetch(new URL("../models/danzero.f32?v=20261007", self.location.href)).then((response) => {
-            if (!response.ok) throw new Error(`DanZero \u6A21\u578B\u4E0B\u8F7D\u5931\u8D25\uFF08${response.status}\uFF09`);
+            if (!response.ok) throw new Error(`\u96BE\u5EA6\u4E09\u6A21\u578B\u4E0B\u8F7D\u5931\u8D25\uFF08${response.status}\uFF09`);
             return response.arrayBuffer();
           }).then(modelFromBuffer).catch((error) => {
             modelPromise = null;
@@ -474,7 +474,7 @@
       }
       function chooseModelAction(view, model) {
         const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
-        if (!moves.length && !view.lastPlay) throw new Error("DanZero \u627E\u4E0D\u5230\u5408\u6CD5\u9886\u51FA\u724C");
+        if (!moves.length && !view.lastPlay) throw new Error("\u96BE\u5EA6\u4E09\u627E\u4E0D\u5230\u5408\u6CD5\u9886\u51FA\u724C");
         const base = prepareBase(model, baseFeatures(view));
         const cached = /* @__PURE__ */ new Map();
         let best = null;
@@ -502,18 +502,47 @@
         }
         return best;
       }
+      function chooseModelAnalysis(view, model, actual = null) {
+        const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
+        const base = prepareBase(model, baseFeatures(view));
+        const unique = /* @__PURE__ */ new Map();
+        for (const move of moves) {
+          const counts = cardCounts(move.cards);
+          const key = counts.join(",");
+          if (unique.has(key)) continue;
+          unique.set(key, {
+            pass: false,
+            cardIds: move.cards.map((card) => card.id),
+            declaration: { type: move.type, mainRank: move.mainRank, size: move.size },
+            score: scoreAction(model, base, counts)
+          });
+        }
+        if (view.lastPlay) unique.set("pass", { pass: true, score: scoreAction(model, base, new Int8Array(54)) });
+        const ranked = [...unique.values()].sort((a, b) => b.score - a.score);
+        let actualScore = null;
+        if (actual) {
+          if (actual.pass) actualScore = view.lastPlay ? scoreAction(model, base, new Int8Array(54)) : null;
+          else {
+            const ids = new Set(actual.cardIds || []);
+            const actualCards = view.hand.filter((card) => ids.has(card.id));
+            if (actualCards.length === ids.size && ids.size > 0) actualScore = scoreAction(model, base, cardCounts(actualCards));
+          }
+        }
+        return { choices: ranked.slice(0, 3), actualScore, candidateCount: ranked.length };
+      }
       if (typeof self !== "undefined") {
         self.onmessage = async (event) => {
-          const { id, view } = event.data;
+          const { id, view, mode, actual } = event.data;
           try {
             const model = await loadModel();
-            self.postMessage({ id, action: chooseModelAction(view, model) });
+            if (mode === "analysis") self.postMessage({ id, analysis: chooseModelAnalysis(view, model, actual) });
+            else self.postMessage({ id, action: chooseModelAction(view, model) });
           } catch (error) {
             self.postMessage({ id, error: error.message || String(error) });
           }
         };
       }
-      module.exports = { chooseModelAction };
+      module.exports = { chooseModelAction, chooseModelAnalysis };
     }
   });
   require_danzero_worker();
