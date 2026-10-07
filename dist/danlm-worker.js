@@ -1914,13 +1914,18 @@
       var { legalMoves, classifyOptions, moveKey } = require_rules();
       var { cardInt, actionVector, stateTokens } = require_danlm_encoding();
       var sessionPromise;
+      var sessionReady = false;
       ort.env.wasm.numThreads = 1;
       if (typeof self !== "undefined") ort.env.wasm.wasmPaths = new URL("./", self.location.href).href;
       function modelSession() {
         if (!sessionPromise) {
           const url = new URL("../models/danlm-v1.onnx?v=20261007", self.location.href).href;
-          sessionPromise = ort.InferenceSession.create(url, { executionProviders: ["wasm"] }).catch((error) => {
+          sessionPromise = ort.InferenceSession.create(url, { executionProviders: ["wasm"] }).then((session) => {
+            sessionReady = true;
+            return session;
+          }).catch((error) => {
             sessionPromise = null;
+            sessionReady = false;
             throw error;
           });
         }
@@ -1995,13 +2000,20 @@
         return decideWithSession(view, mode, actual, await modelSession());
       }
       if (typeof self !== "undefined") {
-        self.onmessage = async (event) => {
+        let queue = Promise.resolve();
+        self.onmessage = (event) => {
           const { id, mode, view, actual } = event.data;
-          try {
-            self.postMessage({ id, [mode === "analysis" ? "analysis" : "action"]: await decide(view, mode, actual) });
-          } catch (error) {
-            self.postMessage({ id, error: error.message || String(error) });
-          }
+          self.postMessage({ id, stage: "queued" });
+          queue = queue.then(async () => {
+            try {
+              if (!sessionReady) self.postMessage({ id, stage: "loading" });
+              const session = await modelSession();
+              self.postMessage({ id, stage: "running" });
+              self.postMessage({ id, [mode === "analysis" ? "analysis" : "action"]: await decideWithSession(view, mode, actual, session) });
+            } catch (error) {
+              self.postMessage({ id, error: error.message || String(error) });
+            }
+          });
         };
       }
       module.exports = { candidatesFor, scoreMoves, decide, decideWithSession };

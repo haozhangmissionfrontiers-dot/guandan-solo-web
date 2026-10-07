@@ -784,9 +784,24 @@
   var modelRequestNumber = 0;
   var botGeneration = 0;
   var modelError = null;
+  var modelWorkerStage = null;
   var pendingModelRequests = /* @__PURE__ */ new Map();
   var liveModelAnalysis = null;
   var reviewModelAnalysis = /* @__PURE__ */ new Map();
+  var MODEL_TIMEOUT_MS = { starting: 45e3, queued: 24e4, loading: 24e4, running: 9e4 };
+  var MODEL_TIMEOUT_MESSAGE = {
+    starting: "\u96BE\u5EA6\u56DB\u6A21\u578B\u7EBF\u7A0B\u542F\u52A8\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5",
+    queued: "\u96BE\u5EA6\u56DB\u5206\u6790\u7B49\u5F85\u8FC7\u4E45\uFF0C\u8BF7\u91CD\u8BD5",
+    loading: "\u96BE\u5EA6\u56DB\u6A21\u578B\u52A0\u8F7D\u8D85\u65F6\uFF08\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF09\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5",
+    running: "\u96BE\u5EA6\u56DB\u63A8\u7406\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5"
+  };
+  function armModelTimeout(pending, stage) {
+    clearTimeout(pending.timer);
+    pending.stage = stage;
+    pending.timer = setTimeout(() => {
+      if (modelWorkerInstance === pending.worker) stopModelWorker(MODEL_TIMEOUT_MESSAGE[stage]);
+    }, MODEL_TIMEOUT_MS[stage]);
+  }
   function stopModelWorker(message) {
     const worker = modelWorkerInstance;
     for (const [id, pending] of pendingModelRequests) {
@@ -797,16 +812,24 @@
     }
     worker?.terminate();
     modelWorkerInstance = null;
+    modelWorkerStage = null;
   }
   function modelWorker() {
     if (modelWorkerInstance) return modelWorkerInstance;
     if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u51FA\u724C\u5206\u6790\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
-    const worker = new Worker(new URL("./dist/danlm-worker.js?v=20261007-advice", document.baseURI));
+    const worker = new Worker(new URL("./dist/danlm-worker.js?v=20261007-timeout-fix", document.baseURI));
     worker.onmessage = (event) => {
       const pending = pendingModelRequests.get(event.data.id);
       if (!pending) return;
+      if (event.data.stage) {
+        modelWorkerStage = event.data.stage;
+        armModelTimeout(pending, event.data.stage);
+        pending.onProgress?.(event.data.stage);
+        return;
+      }
       pendingModelRequests.delete(event.data.id);
       clearTimeout(pending.timer);
+      modelWorkerStage = null;
       if (event.data.error) pending.reject(new Error(event.data.error));
       else pending.resolve(event.data.analysis ?? event.data.action);
     };
@@ -816,22 +839,21 @@
     modelWorkerInstance = worker;
     return worker;
   }
-  function requestModel(mode, view, actual = null) {
+  function requestModel(mode, view, actual = null, onProgress = null) {
     return new Promise((resolve, reject) => {
       const worker = modelWorker();
       const id = ++modelRequestNumber;
-      const timer = setTimeout(() => {
-        if (modelWorkerInstance === worker) stopModelWorker("\u96BE\u5EA6\u56DB\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5");
-      }, 9e4);
-      pendingModelRequests.set(id, { resolve, reject, timer, worker });
+      const pending = { resolve, reject, timer: null, worker, onProgress };
+      pendingModelRequests.set(id, pending);
+      armModelTimeout(pending, "starting");
       worker.postMessage({ id, mode, view, actual });
     });
   }
-  function requestModelAction(view) {
-    return requestModel("action", view);
+  function requestModelAction(view, onProgress = null) {
+    return requestModel("action", view, null, onProgress);
   }
-  function requestModelAnalysis(view, actual = null) {
-    return requestModel("analysis", view, actual);
+  function requestModelAnalysis(view, actual = null, onProgress = null) {
+    return requestModel("analysis", view, actual, onProgress);
   }
   function inform(message) {
     toast.textContent = message;
@@ -899,14 +921,19 @@
     if (panel === "advice" && view.phase === "playing" && view.turn === 0) {
       const key = currentDecisionKey(view);
       if (liveModelAnalysis?.key === key) return;
-      liveModelAnalysis = { key, status: "loading" };
-      requestModelAnalysis(view).then((result) => {
-        if (match !== currentMatch || liveModelAnalysis?.key !== key) return;
-        liveModelAnalysis = { key, status: "ready", result };
+      const attempt = /* @__PURE__ */ Symbol("live-analysis");
+      liveModelAnalysis = { key, attempt, status: "loading" };
+      requestModelAnalysis(view, null, (stage) => {
+        if (match !== currentMatch || liveModelAnalysis?.attempt !== attempt) return;
+        liveModelAnalysis = { key, attempt, status: "loading", stage };
+        if (screen === "game" && panel === "advice") render();
+      }).then((result) => {
+        if (match !== currentMatch || liveModelAnalysis?.attempt !== attempt) return;
+        liveModelAnalysis = { key, attempt, status: "ready", result };
         if (screen === "game" && panel === "advice") render();
       }).catch((error) => {
-        if (match !== currentMatch || liveModelAnalysis?.key !== key) return;
-        liveModelAnalysis = { key, status: "error", error: error.message };
+        if (document.hidden || match !== currentMatch || liveModelAnalysis?.attempt !== attempt) return;
+        liveModelAnalysis = { key, attempt, status: "error", error: error.message };
         if (screen === "game" && panel === "advice") render();
       });
     }
@@ -921,14 +948,19 @@
         return;
       }
       const number = reviewNumber;
-      reviewModelAnalysis.set(number, { status: "loading" });
-      requestModelAnalysis(pastView, actual).then((result) => {
-        if (match !== currentMatch) return;
-        reviewModelAnalysis.set(number, { status: "ready", result });
+      const attempt = /* @__PURE__ */ Symbol("review-analysis");
+      reviewModelAnalysis.set(number, { attempt, status: "loading" });
+      requestModelAnalysis(pastView, actual, (stage) => {
+        if (match !== currentMatch || reviewModelAnalysis.get(number)?.attempt !== attempt) return;
+        reviewModelAnalysis.set(number, { attempt, status: "loading", stage });
+        if (screen === "game" && panel === "history" && reviewNumber === number) render();
+      }).then((result) => {
+        if (match !== currentMatch || reviewModelAnalysis.get(number)?.attempt !== attempt) return;
+        reviewModelAnalysis.set(number, { attempt, status: "ready", result });
         if (screen === "game" && panel === "history" && reviewNumber === number) render();
       }).catch((error) => {
-        if (match !== currentMatch) return;
-        reviewModelAnalysis.set(number, { status: "error", error: error.message });
+        if (document.hidden || match !== currentMatch || reviewModelAnalysis.get(number)?.attempt !== attempt) return;
+        reviewModelAnalysis.set(number, { attempt, status: "error", error: error.message });
         if (screen === "game" && panel === "history" && reviewNumber === number) render();
       });
     }
@@ -1032,7 +1064,7 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
-    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : modelWorkerStage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\uFF0C\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
@@ -1048,7 +1080,7 @@
   }
   function modelAdviceHTML(view) {
     const state = liveModelAnalysis?.key === currentDecisionKey(view) ? liveModelAnalysis : null;
-    if (!state || state.status === "loading") return '<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF</strong><p>\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026</p></div>';
+    if (!state || state.status === "loading") return `<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF</strong><p>${state?.stage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\u3002\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026"}</p></div>`;
     if (state.status === "error") return `<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
     return `<div class="model-assist"><div class="model-assist-head"><strong>\u51FA\u724C\u601D\u8DEF</strong><span>\u524D ${state.result.choices.length} / \u5171 ${state.result.candidateCount} \u79CD</span></div><p class="model-explanation-note">\u6309\u6A21\u578B\u8BC4\u5206\u6392\u5E8F\uFF1B\u53C2\u8003\u7406\u7531\u57FA\u4E8E\u53EF\u89C1\u724C\u9762\uFF0C\u5E76\u975E\u6A21\u578B\u7684\u5185\u90E8\u89E3\u91CA\u3002</p><div class="model-choices">${state.result.choices.map((choice, index) => `<button class="model-choice" data-action="model-advice" data-index="${index}"><span>\u7B2C ${index + 1} \u9009 \xB7 \u8BC4\u5206 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, view.hand))}</strong><span class="model-choice-reason">\u53C2\u8003\u7406\u7531\uFF1A${escapeHTML(modelChoiceReason(choice, view))}</span><small>${choice.pass ? "\u70B9\u6B64\u67E5\u770B\uFF0C\u518D\u7531\u4F60\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u6B64\u9009\u4E2D\u724C\uFF0C\u51FA\u724C\u4ECD\u7531\u4F60\u786E\u8BA4"} \u2192</small></button>`).join("")}</div><p class="model-caveat">\u8BC4\u5206\u53EA\u6BD4\u8F83\u5F53\u524D\u5019\u9009\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u8BF7\u7ED3\u5408\u961F\u53CB\u548C\u5269\u4F59\u724C\u5224\u65AD\u3002</p></div>`;
   }
@@ -1058,7 +1090,7 @@
   }
   function modelReviewHTML(review) {
     const state = reviewModelAnalysis.get(review.eventNumber);
-    if (!state || state.status === "loading") return '<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026</p></div>';
+    if (!state || state.status === "loading") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>${state?.stage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\u3002\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026"}</p></div>`;
     if (state.status === "unavailable") return '<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u8FD9\u6B65\u65E7\u8BB0\u5F55\u7F3A\u5C11\u5FC5\u8981\u4FE1\u606F\uFF0C\u65E0\u6CD5\u5B89\u5168\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u3002</p></div>';
     if (state.status === "error") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
     const best = state.result.choices[0];
@@ -1101,7 +1133,9 @@
         let acted;
         if (match.phase === "playing") {
           const seat = match.turn;
-          const action = await requestModelAction(viewFor(match, seat));
+          const action = await requestModelAction(viewFor(match, seat), () => {
+            if (generation === botGeneration && match === currentMatch && screen === "game") render();
+          });
           if (generation !== botGeneration || match !== currentMatch || screen !== "game" || document.hidden) return;
           if (action.pass) pass(match, seat);
           else play(match, seat, action.cardIds, action.declaration);
@@ -1128,9 +1162,13 @@
     if (document.hidden) {
       clearTimeout(botTimer);
       botGeneration += 1;
+      if (pendingModelRequests.size) {
+        stopModelWorker("\u9875\u9762\u5207\u5230\u540E\u53F0\uFF0C\u5206\u6790\u5DF2\u6682\u505C");
+        resetModelAssistance();
+      }
     } else {
+      render();
       scheduleBot();
-      ensureModelAssistance();
     }
   });
   root.addEventListener("click", (event) => {
