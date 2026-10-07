@@ -330,7 +330,7 @@
     "miniprogram/lib/bot.js"(exports, module) {
       var { createDeck, rankPower, legalReturnCards: legalReturnCards2 } = require_cards();
       var { legalMoves, beats: beats2, classifyOptions: classifyOptions2, moveKey: moveKey2 } = require_rules();
-      var DIFFICULTIES = ["simple", "hard1", "hard2", "danzero"];
+      var DIFFICULTIES = ["simple", "hard1", "hard2", "danzero", "danlm"];
       var teamOf = (seat) => seat % 2;
       var partnerOf = (seat) => (seat + 2) % 4;
       var declarationOf = (move) => ({ type: move.type, mainRank: move.mainRank, size: move.size });
@@ -554,6 +554,7 @@
       }
       function chooseBotAction(view, difficulty = "simple") {
         if (difficulty === "danzero") throw new Error("\u96BE\u5EA6\u4E09\u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B\u7EBF\u7A0B\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
+        if (difficulty === "danlm") throw new Error("\u96BE\u5EA6\u56DB\u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B\u7EBF\u7A0B\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
         if (difficulty === "hard2") return hard2Action(view);
         if (difficulty === "hard1") return hard1Action(view);
         return simpleAction(view);
@@ -1025,27 +1026,32 @@
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
   var seatTone = (seat) => seat % 2 === 0 ? "ally" : "rival";
-  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09" };
+  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09", danlm: "\u96BE\u5EA6\u56DB" };
   var danzeroWorker = null;
+  var danlmWorker = null;
   var modelRequestNumber = 0;
   var botGeneration = 0;
   var modelError = null;
   var pendingModelRequests = /* @__PURE__ */ new Map();
   var liveModelAnalysis = null;
   var reviewModelAnalysis = /* @__PURE__ */ new Map();
-  function stopModelWorker(message) {
-    for (const pending of pendingModelRequests.values()) {
+  function stopModelWorker(message, kind = "danzero") {
+    const worker = kind === "danlm" ? danlmWorker : danzeroWorker;
+    for (const [id, pending] of pendingModelRequests) {
+      if (pending.worker !== worker) continue;
       clearTimeout(pending.timer);
       pending.reject(new Error(message));
+      pendingModelRequests.delete(id);
     }
-    pendingModelRequests.clear();
-    danzeroWorker?.terminate();
-    danzeroWorker = null;
+    worker?.terminate();
+    if (kind === "danlm") danlmWorker = null;
+    else danzeroWorker = null;
   }
-  function modelWorker() {
-    if (danzeroWorker) return danzeroWorker;
-    if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u96BE\u5EA6\u4E09\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
-    const worker = new Worker(new URL("./dist/danzero-worker.js?v=20261007-assist", document.baseURI));
+  function modelWorker(kind = "danzero") {
+    if (kind === "danlm" && danlmWorker) return danlmWorker;
+    if (kind === "danzero" && danzeroWorker) return danzeroWorker;
+    if (typeof Worker === "undefined") throw new Error(`\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B`);
+    const worker = new Worker(new URL(kind === "danlm" ? "./dist/danlm-worker.js?v=20261007b" : "./dist/danzero-worker.js?v=20261007-assist", document.baseURI));
     worker.onmessage = (event) => {
       const pending = pendingModelRequests.get(event.data.id);
       if (!pending) return;
@@ -1055,24 +1061,25 @@
       else pending.resolve(event.data.analysis ?? event.data.action);
     };
     worker.onerror = () => {
-      if (danzeroWorker === worker) stopModelWorker("\u96BE\u5EA6\u4E09\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8");
+      if ((kind === "danlm" ? danlmWorker : danzeroWorker) === worker) stopModelWorker(`${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8`, kind);
     };
-    danzeroWorker = worker;
+    if (kind === "danlm") danlmWorker = worker;
+    else danzeroWorker = worker;
     return worker;
   }
-  function requestModel(mode, view, actual = null) {
+  function requestModel(mode, view, actual = null, kind = "danzero") {
     return new Promise((resolve, reject) => {
-      const worker = modelWorker();
+      const worker = modelWorker(kind);
       const id = ++modelRequestNumber;
       const timer = setTimeout(() => {
-        if (danzeroWorker === worker) stopModelWorker("\u96BE\u5EA6\u4E09\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5");
+        if ((kind === "danlm" ? danlmWorker : danzeroWorker) === worker) stopModelWorker(`${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5`, kind);
       }, 9e4);
-      pendingModelRequests.set(id, { resolve, reject, timer });
+      pendingModelRequests.set(id, { resolve, reject, timer, worker });
       worker.postMessage({ id, mode, view, actual });
     });
   }
-  function requestModelAction(view) {
-    return requestModel("action", view);
+  function requestModelAction(view, kind = "danzero") {
+    return requestModel("action", view, null, kind);
   }
   function requestModelAnalysis(view, actual = null) {
     return requestModel("analysis", view, actual);
@@ -1238,7 +1245,7 @@
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u7528\u672C\u5730\u6A21\u578B\uFF0C\u4E5F\u4F1A\u8F85\u52A9\u4F60\u7684\u51FA\u724C\u5EFA\u8BAE\u4E0E\u590D\u76D8\uFF0C\u9996\u6B21\u4F7F\u7528\u9700\u4E0B\u8F7D\u7EA6 5 MB\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u4F7F\u7528\u672C\u5730 DanZero\uFF08\u4E5F\u63D0\u4F9B\u5EFA\u8BAE\u4E0E\u590D\u76D8\uFF09\uFF1B\u96BE\u5EA6\u56DB\u4F7F\u7528\u672C\u5730 DanLM\u3002\u96BE\u5EA6\u56DB\u9996\u6B21\u52A0\u8F7D\u7EA6 30 MB\uFF0C\u4E0D\u4EA7\u751F AI \u670D\u52A1\u8D39\u7528\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -1274,14 +1281,14 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
-    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const ordinaryStatus = modelError && view.phase === "playing" && ["danzero", "danlm"].includes(view.players[view.turn]?.difficulty) ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
   <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
   <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
   ${roundHistoryHTML(view)}
-  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
+  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && ["danzero", "danlm"].includes(view.players[view.turn]?.difficulty) ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
@@ -1341,9 +1348,9 @@
         const currentMatch = match;
         const previousEventCount = match.events.length;
         let acted;
-        if (match.phase === "playing" && match.players[match.turn]?.difficulty === "danzero") {
+        if (match.phase === "playing" && ["danzero", "danlm"].includes(match.players[match.turn]?.difficulty)) {
           const seat = match.turn;
-          const action = await requestModelAction(viewFor(match, seat));
+          const action = await requestModelAction(viewFor(match, seat), match.players[seat].difficulty);
           if (generation !== botGeneration || match !== currentMatch || screen !== "game" || document.hidden) return;
           if (action.pass) pass(match, seat);
           else play(match, seat, action.cardIds, action.declaration);
