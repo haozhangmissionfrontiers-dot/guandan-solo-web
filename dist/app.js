@@ -255,92 +255,21 @@
     }
   });
 
-  // miniprogram/lib/coach.js
-  var require_coach = __commonJS({
-    "miniprogram/lib/coach.js"(exports, module) {
-      var { legalMoves, TYPE_LABELS: TYPE_LABELS2 } = require_rules();
-      var { cardLabel: cardLabel2 } = require_cards();
-      function teammateOf(seat) {
-        return (seat + 2) % 4;
-      }
-      function teamOf(seat) {
-        return seat % 2;
-      }
-      function recommend(visible2, seat) {
-        if (!visible2 || !visible2.hand || visible2.turn !== seat || visible2.phase !== "playing") return { actions: [], note: "\u7B49\u5F85\u4F60\u7684\u56DE\u5408\u3002" };
-        const candidates = legalMoves(visible2.hand, visible2.levelRank, visible2.lastPlay);
-        const teammate = teammateOf(seat);
-        const lastByPartner = visible2.lastSeat === teammate;
-        const urgentOpponent = visible2.lastSeat !== null && teamOf(visible2.lastSeat) !== teamOf(seat) && visible2.handCounts[visible2.lastSeat] <= 5;
-        const teamAtA = visible2.levels[teamOf(seat)] === 14;
-        const choices = candidates.map((move) => {
-          const remaining = visible2.hand.filter((card) => !move.cards.some((used) => used.id === card.id));
-          const rankCounts = /* @__PURE__ */ new Map();
-          remaining.forEach((card) => rankCounts.set(card.rank, (rankCounts.get(card.rank) || 0) + 1));
-          const looseSingles = [...rankCounts.values()].filter((count) => count === 1).length;
-          let score = move.size * 5 - looseSingles * 0.7 - move.power * 0.25 - move.tier * 4;
-          if (!remaining.length) score += 90;
-          if (lastByPartner) score -= 40;
-          if (urgentOpponent) score += 15 + move.tier * 2;
-          if (teamAtA && visible2.finishOrder.includes(teammate) && !remaining.length) score += 50;
-          let reason;
-          if (!remaining.length) reason = "\u8FD9\u624B\u53EF\u4EE5\u8D70\u5B8C\u4F60\u7684\u724C\uFF0C\u4E89\u53D6\u66F4\u597D\u7684\u56E2\u961F\u540D\u6B21\u3002";
-          else if (lastByPartner) reason = "\u8FD9\u624B\u4F1A\u76D6\u8FC7\u961F\u53CB\uFF0C\u901A\u5E38\u503C\u5F97\u5148\u8BA9\u961F\u53CB\u7EE7\u7EED\u63A7\u724C\u3002";
-          else if (urgentOpponent) reason = "\u5BF9\u624B\u4F59\u724C\u5F88\u5C11\uFF0C\u8FD9\u624B\u53EF\u4EE5\u4E89\u53D6\u51FA\u724C\u6743\u3002";
-          else if (move.tier > 0) reason = "\u7528\u5F3A\u724C\u62FF\u56DE\u51FA\u724C\u6743\uFF0C\u4F46\u4F1A\u6D88\u8017\u4E00\u7EC4\u63A7\u5236\u724C\u3002";
-          else reason = `\u4E00\u6B21\u5904\u7406 ${move.size} \u5F20\u724C\uFF0C\u4FDD\u7559\u66F4\u5F3A\u7684\u724C\u4F5C\u540E\u624B\u3002`;
-          return {
-            pass: false,
-            cardIds: move.cards.map((card) => card.id),
-            label: `${TYPE_LABELS2[move.type]} \xB7 ${move.cards.map(cardLabel2).join(" ")}`,
-            reason,
-            score,
-            moveType: move.type,
-            power: move.power,
-            declaration: { type: move.type, mainRank: move.mainRank, size: move.size }
-          };
-        });
-        if (visible2.lastPlay) {
-          choices.push({
-            pass: true,
-            cardIds: [],
-            label: "\u8FC7\u724C",
-            reason: lastByPartner ? "\u961F\u53CB\u6B63\u5728\u63A7\u724C\uFF0C\u8BA9\u961F\u53CB\u7EE7\u7EED\u51FA\u724C\u3002" : "\u4FDD\u7559\u624B\u4E2D\u7684\u63A7\u5236\u724C\uFF0C\u7B49\u5F85\u4E0B\u4E00\u8F6E\u673A\u4F1A\u3002",
-            score: lastByPartner ? 70 : urgentOpponent ? -25 : 1,
-            moveType: "pass",
-            power: 0
-          });
-        }
-        choices.sort((a, b) => b.score - a.score);
-        const seen = /* @__PURE__ */ new Set();
-        const actions = choices.filter((choice) => {
-          const key = choice.pass ? "pass" : `${choice.moveType}:${choice.power}:${choice.cardIds.length}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }).slice(0, 2).map(({ score, power, ...choice }) => choice);
-        return { actions, note: "\u57FA\u4E8E\u4F60\u7684\u624B\u724C\u548C\u724C\u684C\u516C\u5F00\u4FE1\u606F\uFF1B\u5176\u4ED6\u4EBA\u7684\u624B\u724C\u672A\u53C2\u4E0E\u8BA1\u7B97\u3002" };
+  // web/no-rule-coach.js
+  var require_no_rule_coach = __commonJS({
+    "web/no-rule-coach.js"(exports, module) {
+      function recommend() {
+        return { actions: [], note: "" };
       }
       module.exports = { recommend };
     }
   });
 
-  // miniprogram/lib/bot.js
-  var require_bot = __commonJS({
-    "miniprogram/lib/bot.js"(exports, module) {
-      var { createDeck, rankPower, legalReturnCards: legalReturnCards2 } = require_cards();
-      var { legalMoves, beats: beats2, classifyOptions: classifyOptions2, moveKey: moveKey2 } = require_rules();
-      var DIFFICULTIES = ["simple", "hard1", "hard2", "danzero", "danlm"];
-      var teamOf = (seat) => seat % 2;
-      var partnerOf = (seat) => (seat + 2) % 4;
-      var declarationOf = (move) => ({ type: move.type, mainRank: move.mainRank, size: move.size });
-      function simpleAction(view) {
-        const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
-        if (view.lastPlay && view.lastSeat !== null && teamOf(view.lastSeat) === teamOf(view.turn)) return { pass: true };
-        if (!moves.length) return { pass: true };
-        moves.sort((a, b) => a.tier - b.tier || b.size - a.size || a.power - b.power);
-        return { pass: false, cardIds: moves[0].cards.map((card) => card.id), declaration: declarationOf(moves[0]) };
-      }
+  // web/solo-bot.js
+  var require_solo_bot = __commonJS({
+    "web/solo-bot.js"(exports, module) {
+      var { rankPower, legalReturnCards: legalReturnCards2 } = require_cards();
+      var DIFFICULTIES = ["danlm"];
       function handQuality(hand, level) {
         const counts = /* @__PURE__ */ new Map();
         let control = 0;
@@ -368,198 +297,17 @@
         }
         return -hand.length * 2.3 + groups + runs + control;
       }
-      function scoreAction(view, action) {
-        const seat = view.turn;
-        const partner = partnerOf(seat);
-        const partnerLed = view.lastPlay && view.lastSeat !== null && teamOf(view.lastSeat) === teamOf(seat);
-        const opponents = [0, 1, 2, 3].filter((other) => teamOf(other) !== teamOf(seat) && !view.finishOrder.includes(other));
-        const danger = opponents.length ? Math.min(...opponents.map((other) => view.handCounts[other])) : 27;
-        const teammateFinished = view.finishOrder.includes(partner);
-        if (action.pass) {
-          if (!view.lastPlay) return -Infinity;
-          if (partnerLed) return 18 + (view.handCounts[partner] <= 5 ? 10 : 0);
-          return danger <= 2 ? -22 : danger <= 5 ? -9 : 0;
-        }
-        const move = action.move;
-        const used = new Set(action.cardIds);
-        const remaining = view.hand.filter((card) => !used.has(card.id));
-        if (!remaining.length) {
-          const first = view.finishOrder[0];
-          return 100 + (first === partner ? 50 : 0) + (view.levels[teamOf(seat)] === 14 ? 15 : 0);
-        }
-        let score = handQuality(remaining, view.levelRank) - handQuality(view.hand, view.levelRank);
-        score -= move.power * 0.17;
-        if (move.tier > 0) score -= 9 + move.tier * 1.4;
-        if (partnerLed) score -= 35 + (view.handCounts[partner] <= 5 ? 10 : 0);
-        if (view.lastPlay && !partnerLed && danger <= 5) score += 11 + (5 - danger) * 3;
-        if (view.lastPlay && !partnerLed && danger <= 2 && move.tier > 0) score += 9;
-        if (teammateFinished && view.finishOrder[0] === partner) score += move.size * 1.5;
-        return score;
-      }
-      function rankedActions(view) {
-        const moves = legalMoves(view.hand, view.levelRank, view.lastPlay);
-        const choices = moves.map((move) => ({ pass: false, cardIds: move.cards.map((card) => card.id), move }));
-        if (view.lastPlay) choices.push({ pass: true });
-        for (const action of choices) action.score = scoreAction(view, action);
-        choices.sort((a, b) => b.score - a.score || (a.pass ? 1 : 0) - (b.pass ? 1 : 0) || (a.move?.power || 0) - (b.move?.power || 0));
-        return choices;
-      }
-      function hard1Action(view) {
-        const choice = rankedActions(view)[0];
-        return choice ? { pass: choice.pass, cardIds: choice.cardIds, declaration: choice.move && declarationOf(choice.move) } : { pass: true };
-      }
-      function chooseReturnCard(view, difficulty = "simple") {
-        const eligible = legalReturnCards2(view.hand, view.levelRank);
-        if (difficulty === "simple") return eligible.sort((a, b) => rankPower(a.rank, view.levelRank) - rankPower(b.rank, view.levelRank))[0];
-        return eligible.sort((a, b) => {
+      function chooseReturnCard(view) {
+        return legalReturnCards2(view.hand, view.levelRank).sort((a, b) => {
           const aQuality = handQuality(view.hand.filter((card) => card.id !== a.id), view.levelRank) - rankPower(a.rank, view.levelRank) * 0.15;
           const bQuality = handQuality(view.hand.filter((card) => card.id !== b.id), view.levelRank) - rankPower(b.rank, view.levelRank) * 0.15;
           return bQuality - aQuality || rankPower(a.rank, view.levelRank) - rankPower(b.rank, view.levelRank);
         })[0];
       }
-      function unseenCards(view) {
-        const known = new Set(view.hand.map((card) => card.id));
-        for (const event of view.events) {
-          if (event.handNumber === view.handNumber && event.type === "play") {
-            for (const card of event.cards || []) known.add(card.id);
-          }
-        }
-        return createDeck().filter((card) => !known.has(card.id));
+      function chooseBotAction() {
+        throw new Error("\u8BF7\u4F7F\u7528\u96BE\u5EA6\u56DB\u6A21\u578B\u7EBF\u7A0B\u51FA\u724C");
       }
-      function seededRandom(view) {
-        let value = view.events.length * 2654435761 + view.turn * 1013904223 + view.handNumber * 1664525 >>> 0;
-        for (const card of view.hand) value = Math.imul(value ^ card.rank, 1664525) + card.id.charCodeAt(0) >>> 0;
-        return () => {
-          value = Math.imul(value, 1664525) + 1013904223 >>> 0;
-          return value / 2 ** 32;
-        };
-      }
-      function sampleHands(view, pool, random) {
-        const shuffled = pool.slice();
-        for (let i = shuffled.length - 1; i > 0; i -= 1) {
-          const j = Math.floor(random() * (i + 1));
-          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        const hands = [[], [], [], []];
-        hands[view.turn] = view.hand.slice();
-        let at = 0;
-        for (let seat = 0; seat < 4; seat += 1) {
-          if (seat === view.turn) continue;
-          hands[seat] = shuffled.slice(at, at + view.handCounts[seat]);
-          at += view.handCounts[seat];
-        }
-        return hands;
-      }
-      function nextActive(finished, seat) {
-        for (let step = 1; step <= 4; step += 1) {
-          const next = (seat + step) % 4;
-          if (!finished.includes(next)) return next;
-        }
-        return null;
-      }
-      function sampledHandOutcome(view, action, hands) {
-        const seat = view.turn;
-        const finished = view.finishOrder.slice();
-        let lastPlay = view.lastPlay;
-        let lastSeat = view.lastSeat;
-        let passes = view.passes || 0;
-        let turn = seat;
-        for (let step = 0; step < 180; step += 1) {
-          const current = step === 0 ? action : chooseBotAction({
-            ...view,
-            turn,
-            hand: hands[turn],
-            handCounts: hands.map((hand) => hand.length),
-            lastPlay,
-            lastSeat,
-            passes,
-            finishOrder: finished
-          }, view.players[turn]?.difficulty === "simple" ? "simple" : "hard1");
-          if (current.pass) {
-            passes += 1;
-            const active = 4 - finished.length;
-            const needed = active - (finished.includes(lastSeat) ? 0 : 1);
-            if (passes >= needed) {
-              const lead = finished.includes(lastSeat) ? partnerOf(lastSeat) : lastSeat;
-              turn = finished.includes(lead) ? nextActive(finished, lead) : lead;
-              lastPlay = null;
-              lastSeat = null;
-              passes = 0;
-              continue;
-            }
-          } else {
-            const move = step === 0 ? action.move : classifyOptions2(
-              hands[turn].filter((card) => current.cardIds.includes(card.id)),
-              view.levelRank
-            ).find((option) => moveKey2(option) === moveKey2(current.declaration));
-            if (!move || !beats2(move, lastPlay)) return 0;
-            const used = new Set(current.cardIds);
-            hands[turn] = hands[turn].filter((card) => !used.has(card.id));
-            lastPlay = move;
-            lastSeat = turn;
-            passes = 0;
-            if (!hands[turn].length) {
-              finished.push(turn);
-              if (finished.length >= 3 || finished.length === 2 && teamOf(finished[0]) === teamOf(finished[1])) {
-                const first = finished[0];
-                const partnerPlace = finished.includes(partnerOf(first)) ? finished.indexOf(partnerOf(first)) + 1 : 4;
-                const climb = partnerPlace === 2 ? 3 : partnerPlace === 3 ? 2 : 1;
-                return teamOf(first) === teamOf(seat) ? climb : -climb;
-              }
-            }
-          }
-          turn = nextActive(finished, turn);
-        }
-        return 0;
-      }
-      function hard2Action(view) {
-        const ranked = rankedActions(view);
-        if (ranked.length <= 1 || !view.hand.length) return hard1Action(view);
-        if (view.handCounts.reduce((sum, count) => sum + count, 0) > 42) {
-          return { pass: ranked[0].pass, cardIds: ranked[0].cardIds, declaration: ranked[0].move && declarationOf(ranked[0].move) };
-        }
-        const shortlist = [];
-        const seen = /* @__PURE__ */ new Set();
-        for (const action of ranked) {
-          const key = action.pass ? "pass" : `${action.move.type}:${action.move.power}:${action.move.size}:${action.move.tier}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          shortlist.push(action);
-          if (shortlist.length === 4) break;
-        }
-        const bestBomb = ranked.find((action) => action.move?.tier > 0);
-        if (bestBomb && !shortlist.includes(bestBomb)) shortlist.push(bestBomb);
-        const passOption = ranked.find((action) => action.pass);
-        if (passOption && !shortlist.includes(passOption)) shortlist.push(passOption);
-        if (shortlist.length === 1) return { pass: shortlist[0].pass, cardIds: shortlist[0].cardIds, declaration: shortlist[0].move && declarationOf(shortlist[0].move) };
-        const pool = unseenCards(view);
-        const random = seededRandom(view);
-        const worlds = Array.from({ length: 8 }, () => sampleHands(view, pool, random));
-        let best = shortlist[0];
-        let bestScore = -Infinity;
-        for (const action of shortlist) {
-          if (action.score < ranked[0].score - 1.5) continue;
-          let future = 0;
-          for (const world of worlds) {
-            const hands = world.map((hand) => hand.slice());
-            future += sampledHandOutcome(view, action, hands);
-          }
-          const score = action.score + future / worlds.length * 3;
-          if (score > bestScore) {
-            bestScore = score;
-            best = action;
-          }
-        }
-        return { pass: best.pass, cardIds: best.cardIds, declaration: best.move && declarationOf(best.move) };
-      }
-      function chooseBotAction(view, difficulty = "simple") {
-        if (difficulty === "danzero") throw new Error("\u96BE\u5EA6\u4E09\u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B\u7EBF\u7A0B\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
-        if (difficulty === "danlm") throw new Error("\u96BE\u5EA6\u56DB\u9700\u8981\u6D4F\u89C8\u5668\u6A21\u578B\u7EBF\u7A0B\uFF0C\u4E0D\u80FD\u7528\u666E\u901A\u7535\u8111\u7B56\u7565\u4EE3\u66FF");
-        if (difficulty === "hard2") return hard2Action(view);
-        if (difficulty === "hard1") return hard1Action(view);
-        return simpleAction(view);
-      }
-      module.exports = { DIFFICULTIES, chooseBotAction, chooseReturnCard, simpleAction, hard1Action, hard2Action, unseenCards };
+      module.exports = { DIFFICULTIES, chooseBotAction, chooseReturnCard };
     }
   });
 
@@ -568,8 +316,8 @@
     "miniprogram/lib/match.js"(exports, module) {
       var { createDeck, shuffle, sortCards: sortCards2, rankPower, legalReturnCards: legalReturnCards2, cardLabel: cardLabel2 } = require_cards();
       var { classifyOptions: classifyOptions2, moveKey: moveKey2, beats: beats2 } = require_rules();
-      var { recommend } = require_coach();
-      var { DIFFICULTIES, chooseBotAction, chooseReturnCard } = require_bot();
+      var { recommend } = require_no_rule_coach();
+      var { DIFFICULTIES, chooseBotAction, chooseReturnCard } = require_solo_bot();
       function teamOf(seat) {
         return seat % 2;
       }
@@ -898,9 +646,9 @@
     }
   });
 
-  // web/danzero-review.js
-  var require_danzero_review = __commonJS({
-    "web/danzero-review.js"(exports, module) {
+  // web/model-review.js
+  var require_model_review = __commonJS({
+    "web/model-review.js"(exports, module) {
       function reviewView2(review, currentView) {
         if (!review || !Array.isArray(review.handAtTime) || !Array.isArray(review.handCountsAtTime)) return null;
         const events = (currentView.events || []).filter((event) => event.number < review.eventNumber);
@@ -925,7 +673,13 @@
         const event = (currentView.events || []).find((item) => item.number === review.eventNumber);
         if (!event || event.seat !== 0) return null;
         if (event.type === "pass") return { pass: true };
-        if (event.type === "play" && Array.isArray(event.cards)) return { pass: false, cardIds: event.cards.map((card) => card.id) };
+        if (event.type === "play" && Array.isArray(event.cards)) {
+          return {
+            pass: false,
+            cardIds: event.cards.map((card) => card.id),
+            declaration: event.move && { type: event.move.type, mainRank: event.move.mainRank, size: event.move.size }
+          };
+        }
         return null;
       }
       module.exports = { reviewView: reviewView2, reviewActual: reviewActual2 };
@@ -998,7 +752,7 @@
   var { cardLabel, sortCards, legalReturnCards } = require_cards();
   var { classifyOptions, moveKey, beats, TYPE_LABELS } = require_rules();
   var { openingAnalysis } = require_planner();
-  var { reviewView, reviewActual } = require_danzero_review();
+  var { reviewView, reviewActual } = require_model_review();
   var { roundsForHand } = require_round_history();
   var { modelChoiceReason } = require_model_reasons();
   var STORAGE = "guandan-web-solo-v1";
@@ -1026,17 +780,15 @@
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
   var seatTone = (seat) => seat % 2 === 0 ? "ally" : "rival";
-  var difficultyName = { simple: "\u7B80\u5355", hard1: "\u96BE\u5EA6\u4E00", hard2: "\u96BE\u5EA6\u4E8C", danzero: "\u96BE\u5EA6\u4E09", danlm: "\u96BE\u5EA6\u56DB" };
-  var danzeroWorker = null;
-  var danlmWorker = null;
+  var modelWorkerInstance = null;
   var modelRequestNumber = 0;
   var botGeneration = 0;
   var modelError = null;
   var pendingModelRequests = /* @__PURE__ */ new Map();
   var liveModelAnalysis = null;
   var reviewModelAnalysis = /* @__PURE__ */ new Map();
-  function stopModelWorker(message, kind = "danzero") {
-    const worker = kind === "danlm" ? danlmWorker : danzeroWorker;
+  function stopModelWorker(message) {
+    const worker = modelWorkerInstance;
     for (const [id, pending] of pendingModelRequests) {
       if (pending.worker !== worker) continue;
       clearTimeout(pending.timer);
@@ -1044,14 +796,12 @@
       pendingModelRequests.delete(id);
     }
     worker?.terminate();
-    if (kind === "danlm") danlmWorker = null;
-    else danzeroWorker = null;
+    modelWorkerInstance = null;
   }
-  function modelWorker(kind = "danzero") {
-    if (kind === "danlm" && danlmWorker) return danlmWorker;
-    if (kind === "danzero" && danzeroWorker) return danzeroWorker;
-    if (typeof Worker === "undefined") throw new Error(`\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B`);
-    const worker = new Worker(new URL(kind === "danlm" ? "./dist/danlm-worker.js?v=20261007b" : "./dist/danzero-worker.js?v=20261007-assist", document.baseURI));
+  function modelWorker() {
+    if (modelWorkerInstance) return modelWorkerInstance;
+    if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u51FA\u724C\u5206\u6790\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
+    const worker = new Worker(new URL("./dist/danlm-worker.js?v=20261007-advice", document.baseURI));
     worker.onmessage = (event) => {
       const pending = pendingModelRequests.get(event.data.id);
       if (!pending) return;
@@ -1061,25 +811,24 @@
       else pending.resolve(event.data.analysis ?? event.data.action);
     };
     worker.onerror = () => {
-      if ((kind === "danlm" ? danlmWorker : danzeroWorker) === worker) stopModelWorker(`${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8`, kind);
+      if (modelWorkerInstance === worker) stopModelWorker("\u96BE\u5EA6\u56DB\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8");
     };
-    if (kind === "danlm") danlmWorker = worker;
-    else danzeroWorker = worker;
+    modelWorkerInstance = worker;
     return worker;
   }
-  function requestModel(mode, view, actual = null, kind = "danzero") {
+  function requestModel(mode, view, actual = null) {
     return new Promise((resolve, reject) => {
-      const worker = modelWorker(kind);
+      const worker = modelWorker();
       const id = ++modelRequestNumber;
       const timer = setTimeout(() => {
-        if ((kind === "danlm" ? danlmWorker : danzeroWorker) === worker) stopModelWorker(`${kind === "danlm" ? "\u96BE\u5EA6\u56DB" : "\u96BE\u5EA6\u4E09"}\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5`, kind);
+        if (modelWorkerInstance === worker) stopModelWorker("\u96BE\u5EA6\u56DB\u6A21\u578B\u5206\u6790\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5");
       }, 9e4);
       pendingModelRequests.set(id, { resolve, reject, timer, worker });
       worker.postMessage({ id, mode, view, actual });
     });
   }
-  function requestModelAction(view, kind = "danzero") {
-    return requestModel("action", view, null, kind);
+  function requestModelAction(view) {
+    return requestModel("action", view);
   }
   function requestModelAnalysis(view, actual = null) {
     return requestModel("analysis", view, actual);
@@ -1101,7 +850,10 @@
   function savedGame() {
     try {
       const value = JSON.parse(localStorage.getItem(STORAGE) || "null");
-      if (value?.match?.players?.length === 4 && Array.isArray(value.match.hands) && value.match.hands.length === 4) return value;
+      if (value?.match?.players?.length === 4 && Array.isArray(value.match.hands) && value.match.hands.length === 4) {
+        for (const player of value.match.players) if (player.bot) player.difficulty = "danlm";
+        return value;
+      }
     } catch {
     }
     return null;
@@ -1241,11 +993,10 @@
   }
   function homeHTML() {
     const saved = savedGame();
-    const botChoice = (seat, label) => `<label class="bot-choice" for="bot-difficulty-${seat}"><span>${label}</span><select id="bot-difficulty-${seat}" aria-label="${label}\u96BE\u5EA6">${Object.entries(difficultyName).map(([id, name]) => `<option value="${id}" ${saved?.match?.players?.[seat]?.difficulty === id ? "selected" : ""}>${name}</option>`).join("")}</select></label>`;
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><div class="bot-settings"><span>\u7535\u8111\u724C\u53CB\u96BE\u5EA6 \xB7 \u5206\u522B\u8BBE\u7F6E</span><div>${botChoice(1, "\u963F\u5DE6 \xB7 \u5BF9\u624B")}${botChoice(2, "\u642D\u5B50 \xB7 \u961F\u53CB")}${botChoice(3, "\u963F\u53F3 \xB7 \u5BF9\u624B")}</div><small>\u7B80\u5355\u6CBF\u7528\u539F\u7B56\u7565\uFF1B\u96BE\u5EA6\u4E00\u770B\u5C40\u52BF\uFF1B\u96BE\u5EA6\u4E8C\u63A8\u6F14\u6B8B\u5C40\uFF1B\u96BE\u5EA6\u4E09\u4F7F\u7528\u672C\u5730 DanZero\uFF08\u4E5F\u63D0\u4F9B\u5EFA\u8BAE\u4E0E\u590D\u76D8\uFF09\uFF1B\u96BE\u5EA6\u56DB\u4F7F\u7528\u672C\u5730 DanLM\u3002\u96BE\u5EA6\u56DB\u9996\u6B21\u52A0\u8F7D\u7EA6 30 MB\uFF0C\u4E0D\u4EA7\u751F AI \u670D\u52A1\u8D39\u7528\u3002</small></div><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><p class="model-info">\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u7EDF\u4E00\u4F7F\u7528\u96BE\u5EA6\u56DB\uFF1B\u51FA\u724C\u5EFA\u8BAE\u4E0E\u590D\u76D8\u4E5F\u7531\u5B83\u63D0\u4F9B\u3002\u9996\u6B21\u9700\u52A0\u8F7D\u7EA6 30 MB\u3002</p><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -1253,7 +1004,7 @@
     const finished = view.finishOrder.indexOf(seat);
     const active = view.phase === "playing" && view.turn === seat;
     const recent = recentBotAction?.seat === seat;
-    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)} <small>\xB7 ${difficultyName[view.players[seat].difficulty] || "\u7B80\u5355"}</small></strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
+    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
   }
   function currentMove(view) {
     const cards = view.hand.filter((card) => selected.has(card.id));
@@ -1281,14 +1032,14 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
-    const ordinaryStatus = modelError && view.phase === "playing" && ["danzero", "danlm"].includes(view.players[view.turn]?.difficulty) ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
   <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
   <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
   ${roundHistoryHTML(view)}
-  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && ["danzero", "danlm"].includes(view.players[view.turn]?.difficulty) ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
+  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.bot ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
@@ -1307,18 +1058,18 @@
   }
   function modelReviewHTML(review) {
     const state = reviewModelAnalysis.get(review.eventNumber);
-    if (!state || state.status === "loading") return '<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026</p></div>';
-    if (state.status === "unavailable") return '<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u8FD9\u6B65\u65E7\u8BB0\u5F55\u7F3A\u5C11\u5FC5\u8981\u4FE1\u606F\uFF0C\u65E0\u6CD5\u5B89\u5168\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u3002</p></div>';
-    if (state.status === "error") return `<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
+    if (!state || state.status === "loading") return '<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026</p></div>';
+    if (state.status === "unavailable") return '<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u8FD9\u6B65\u65E7\u8BB0\u5F55\u7F3A\u5C11\u5FC5\u8981\u4FE1\u606F\uFF0C\u65E0\u6CD5\u5B89\u5168\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u3002</p></div>';
+    if (state.status === "error") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
     const best = state.result.choices[0];
     const actualScore = state.result.actualScore;
     const comparison = actualScore == null ? "\u65E0\u6CD5\u4E3A\u4F60\u5F53\u65F6\u7684\u9009\u62E9\u8BA1\u7B97\u6A21\u578B\u5206\u6570\u3002" : !best ? "\u5F53\u65F6\u6CA1\u6709\u53EF\u6BD4\u8F83\u7684\u5019\u9009\u3002" : actualScore > best.score + 0.01 ? "\u4F60\u7684\u5B9E\u9645\u51FA\u724C\u5206\u6570\u66F4\u9AD8\uFF1B\u6A21\u578B\u5019\u9009\u96C6\u53EF\u80FD\u6F0F\u6389\u4E86\u8FD9\u624B\u3002" : actualScore >= best.score - 0.01 ? "\u4F60\u7684\u9009\u62E9\u4E0E\u6A21\u578B\u9996\u9009\u8BC4\u5206\u63A5\u8FD1\u3002" : "\u6A21\u578B\u66F4\u504F\u5411\u4E0B\u5217\u9996\u9009\uFF1B\u53EF\u5BF9\u7167\u5B83\u4E0E\u5B9E\u9645\u51FA\u724C\u7684\u5DEE\u522B\u3002";
-    return `<div class="model-retro"><strong>\u96BE\u5EA6\u4E09\u590D\u76D8</strong><p>\u4F60\u7684\u5B9E\u9645\u9009\u62E9\uFF1A${actualScore == null ? "\u672A\u80FD\u8BC4\u5206" : `\u8BC4\u5206 ${modelScore(actualScore)}`}</p><p>${escapeHTML(comparison)}</p><div class="model-review-choices">${state.result.choices.map((choice, index) => `<div><span>\u7B2C ${index + 1} \u9009 \xB7 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, review.handAtTime))}</strong></div>`).join("")}</div><small>\u5206\u6570\u53EA\u6BD4\u8F83\u5F53\u65F6\u7684\u5019\u9009\u52A8\u4F5C\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u6A21\u578B\u4E0D\u80FD\u7ED9\u51FA\u53EF\u9A8C\u8BC1\u7684\u56E0\u679C\u89E3\u91CA\u3002</small></div>`;
+    return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u4F60\u7684\u5B9E\u9645\u9009\u62E9\uFF1A${actualScore == null ? "\u672A\u80FD\u8BC4\u5206" : `\u8BC4\u5206 ${modelScore(actualScore)}`}</p><p>${escapeHTML(comparison)}</p><div class="model-review-choices">${state.result.choices.map((choice, index) => `<div><span>\u7B2C ${index + 1} \u9009 \xB7 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, review.handAtTime))}</strong></div>`).join("")}</div><small>\u5206\u6570\u53EA\u6BD4\u8F83\u5F53\u65F6\u7684\u5019\u9009\u52A8\u4F5C\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u6A21\u578B\u4E0D\u80FD\u7ED9\u51FA\u53EF\u9A8C\u8BC1\u7684\u56E0\u679C\u89E3\u91CA\u3002</small></div>`;
   }
   function historyHTML(view) {
     const list = [...view.events].reverse();
     const review = view.reviews.find((item) => item.eventNumber === reviewNumber);
-    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">EVERY MOVE COUNTS</span><h2>\u6574\u573A\uFF0C\u4E00\u773C\u770B\u5B8C\u3002</h2><p>\u6309\u65F6\u95F4\u8BB0\u5F55\u6BCF\u4E00\u6B65\u3002\u6253\u5B8C\u4E00\u526F\u540E\uFF0C\u70B9\u81EA\u5DF1\u7684\u51B3\u7B56\u770B\u5F53\u65F6\u8FD8\u80FD\u600E\u4E48\u6253\u3002</p></div>${review ? `<div class="review-box"><div class="detail-head"><strong>\u7B2C ${review.eventNumber} \u6B65 \xB7 \u590D\u76D8</strong><button class="small-close" data-action="close-review" aria-label="\u5173\u95ED\u590D\u76D8">\xD7</button></div><p>\u5F53\u65F6\u4F60\u6253\u4E86\uFF1A${escapeHTML(review.actualLabel)}</p>${modelReviewHTML(review)}<div class="rule-review"><strong>\u89C4\u5219\u5206\u6790\u7684\u6587\u5B57\u601D\u8DEF</strong><p>\u63A8\u8350\uFF1A${escapeHTML(review.advice?.label || "\u6682\u65E0\u5176\u4ED6\u5EFA\u8BAE")}</p><p>${escapeHTML(review.advice?.reason || review.note)}</p></div><small>\u53EA\u4F7F\u7528\u5F53\u65F6\u53EF\u89C1\u4FE1\u606F\uFF0C\u4E0D\u5077\u770B\u540E\u7EED\u6216\u4ED6\u4EBA\u624B\u724C\u3002</small></div>` : ""}<ol class="history-list">${list.map((event) => {
+    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">EVERY MOVE COUNTS</span><h2>\u6574\u573A\uFF0C\u4E00\u773C\u770B\u5B8C\u3002</h2><p>\u6309\u65F6\u95F4\u8BB0\u5F55\u6BCF\u4E00\u6B65\u3002\u6253\u5B8C\u4E00\u526F\u540E\uFF0C\u70B9\u81EA\u5DF1\u7684\u51B3\u7B56\u770B\u5F53\u65F6\u8FD8\u80FD\u600E\u4E48\u6253\u3002</p></div>${review ? `<div class="review-box"><div class="detail-head"><strong>\u7B2C ${review.eventNumber} \u6B65 \xB7 \u590D\u76D8</strong><button class="small-close" data-action="close-review" aria-label="\u5173\u95ED\u590D\u76D8">\xD7</button></div><p>\u5F53\u65F6\u4F60\u6253\u4E86\uFF1A${escapeHTML(review.actualLabel)}</p>${modelReviewHTML(review)}<small>\u53EA\u4F7F\u7528\u5F53\u65F6\u53EF\u89C1\u4FE1\u606F\uFF0C\u4E0D\u5077\u770B\u540E\u7EED\u6216\u4ED6\u4EBA\u624B\u724C\u3002</small></div>` : ""}<ol class="history-list">${list.map((event) => {
       const canReview = event.seat === 0 && (event.type === "play" || event.type === "pass") && view.reviews.some((item) => item.eventNumber === event.number);
       return `<li><span class="history-number">${String(event.number).padStart(3, "0")}</span><div><strong>${escapeHTML(eventText(event, view))}</strong><small>\u7B2C ${event.handNumber} \u526F</small></div>${canReview ? `<button data-action="review" data-number="${event.number}">\u590D\u76D8 \u2197</button>` : ""}</li>`;
     }).join("")}</ol></div>`;
@@ -1348,9 +1099,9 @@
         const currentMatch = match;
         const previousEventCount = match.events.length;
         let acted;
-        if (match.phase === "playing" && ["danzero", "danlm"].includes(match.players[match.turn]?.difficulty)) {
+        if (match.phase === "playing") {
           const seat = match.turn;
-          const action = await requestModelAction(viewFor(match, seat), match.players[seat].difficulty);
+          const action = await requestModelAction(viewFor(match, seat));
           if (generation !== botGeneration || match !== currentMatch || screen !== "game" || document.hidden) return;
           if (action.pass) pass(match, seat);
           else play(match, seat, action.cardIds, action.declaration);
@@ -1389,8 +1140,7 @@
     try {
       if (action === "new") {
         const name = document.getElementById("player-name")?.value.trim().slice(0, 12) || "\u5C0F\u724C\u624B";
-        const difficulty = (seat) => document.getElementById(`bot-difficulty-${seat}`)?.value || "simple";
-        match = createMatch([{ id: "you", name, bot: false }, { id: "left", name: "\u963F\u5DE6", bot: true, difficulty: difficulty(1) }, { id: "partner", name: "\u642D\u5B50", bot: true, difficulty: difficulty(2) }, { id: "right", name: "\u963F\u53F3", bot: true, difficulty: difficulty(3) }]);
+        match = createMatch([{ id: "you", name, bot: false }, { id: "left", name: "\u963F\u5DE6", bot: true, difficulty: "danlm" }, { id: "partner", name: "\u642D\u5B50", bot: true, difficulty: "danlm" }, { id: "right", name: "\u963F\u53F3", bot: true, difficulty: "danlm" }]);
         cardOrder = [];
         openingHand = null;
         panel = "plans";
@@ -1412,6 +1162,7 @@
         roundArchiveOpen = false;
         resetModelAssistance();
         screen = "game";
+        save();
         render();
         scheduleBot();
         return;

@@ -1967,8 +1967,7 @@
         });
         return [...outputs.scores.data];
       }
-      async function decide(view, mode, actual) {
-        const session = await modelSession();
+      async function decideWithSession(view, mode, actual, session) {
         const candidates = candidatesFor(view);
         const actualCandidate = mode === "analysis" ? actualMove(view, actual) : null;
         const moves = candidates.map((candidate) => candidate.move);
@@ -1992,6 +1991,9 @@
         const chosen = candidates[best];
         return { pass: chosen.pass, cardIds: chosen.cardIds, declaration: chosen.declaration };
       }
+      async function decide(view, mode, actual) {
+        return decideWithSession(view, mode, actual, await modelSession());
+      }
       if (typeof self !== "undefined") {
         self.onmessage = async (event) => {
           const { id, mode, view, actual } = event.data;
@@ -2002,7 +2004,7 @@
           }
         };
       }
-      module.exports = { candidatesFor, scoreMoves, decide };
+      module.exports = { candidatesFor, scoreMoves, decide, decideWithSession };
     }
   });
   require_danlm_worker();
