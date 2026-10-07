@@ -59,3 +59,31 @@
 .rule-review{margin-top:14px;padding-top:12px;border-top:1px solid #e2d8bf}
 .rule-review strong{font-size:11px;color:#705f40}
 .rule-review p{margin:7px 0;font-size:11px;line-height:1.6}
+.round-ledger{margin-top:14px;padding:15px 18px 10px;border:1px solid var(--line);border-radius:15px;background:#fffdf8;box-shadow:0 5px 18px rgba(13,55,43,.04)}
+.round-ledger-head,.round-block-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.round-ledger-head h2{font-size:19px;margin:3px 0 0}
+.round-count{font-size:11px;color:#658070;white-space:nowrap}
+.round-empty{margin:12px 0 7px;font-size:11px;color:#799183}
+.round-block{padding:11px 0 4px;border-top:1px solid #e8ede5}
+.round-current{margin-top:11px}
+.round-block-head strong{font-size:12px;color:#214b3b}
+.round-block-head span{font-size:10px;color:#738d7c}
+.round-action-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
+.round-action{display:grid;grid-template-columns:25px 54px minmax(0,1fr);align-items:start;gap:5px;padding:6px 7px;border-radius:7px;background:#f5f8f3;font-size:11px;line-height:1.5}
+.round-action.rival{background:#fbf5f0}
+.round-order{font-size:9px;color:#9eafa0;font-weight:700}
+.round-actor{font-weight:800;color:#285944;white-space:nowrap}
+.round-action.rival .round-actor{color:#a64a3e}
+.round-action-detail{min-width:0;display:flex;flex-wrap:wrap;column-gap:6px;align-items:baseline}
+.round-action-detail strong{font-size:11px;white-space:nowrap}
+.round-action-detail em{font-style:normal;color:#7c8c7e}
+.round-card-text{overflow-wrap:anywhere;color:#425b4e;letter-spacing:.01em}
+.round-archive-toggle{width:100%;min-height:44px;display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding:7px 0;border:0;border-top:1px solid #e8ede5;background:none;color:#285944;font-size:11px;font-weight:800;text-align:left}
+.round-archive{border-top:1px solid #e8ede5}
+.round-archive .round-block:first-child{border-top:0}
+.hand-grid{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:8px 2px;min-width:0}
+.hand-grid .card{width:100%;min-width:0;max-width:58px;height:72px;margin:0;padding:6px 5px;flex:none;justify-self:center}
+@media(max-width:1200px){.hand-grid{grid-template-columns:repeat(9,minmax(0,1fr))}}
+@media(max-width:700px){.round-ledger{margin-top:9px;padding:12px 13px 6px}.round-ledger-head h2{font-size:17px}.round-action{grid-template-columns:22px 44px minmax(0,1fr);gap:4px;padding:5px 6px}.hand-grid{gap:7px 2px}.hand-grid .card{height:64px;min-height:64px;padding:5px 4px}.hand-grid .card-rank,.hand-grid .card-suit{font-size:16px}.hand-grid .card.selected{transform:translateY(-5px)}}
+@media(max-width:500px){.hand-grid{grid-template-columns:repeat(7,minmax(0,1fr))}}
+@media(max-width:370px){.game-layout{padding:8px}.hand-area{padding:12px 9px}.hand-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:5px 2px}.hand-grid .card{height:60px;min-height:60px}.round-ledger{padding:11px 10px 5px}}

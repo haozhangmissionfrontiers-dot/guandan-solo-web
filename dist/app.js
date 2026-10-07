@@ -931,6 +931,31 @@
     }
   });
 
+  // web/round-history.js
+  var require_round_history = __commonJS({
+    "web/round-history.js"(exports, module) {
+      function roundsForHand2(events, handNumber) {
+        const rounds = [];
+        let current = null;
+        for (const event of events || []) {
+          if (event.handNumber !== handNumber) continue;
+          if (event.type === "play" || event.type === "pass") {
+            if (!current) current = { number: rounds.length + 1, actions: [], completed: false, winnerSeat: null };
+            current.actions.push(event);
+            if (event.type === "play") current.winnerSeat = event.seat;
+          } else if ((event.type === "trickEnd" || event.type === "handEnd") && current) {
+            current.completed = true;
+            rounds.push(current);
+            current = null;
+          }
+        }
+        if (current) rounds.push(current);
+        return rounds;
+      }
+      module.exports = { roundsForHand: roundsForHand2 };
+    }
+  });
+
   // web/app.js
   var { createMatch, startNextHand, returnTribute, play, pass, autoAction, viewFor } = require_match();
   var { cardLabel, sortCards, legalReturnCards } = require_cards();
@@ -938,6 +963,7 @@
   var { recommend } = require_coach();
   var { openingAnalysis } = require_planner();
   var { reviewView, reviewActual } = require_danzero_review();
+  var { roundsForHand } = require_round_history();
   var STORAGE = "guandan-web-solo-v1";
   var BOT_STEP_DELAY_MS = 1450;
   var BOT_CUE_DURATION_MS = 1300;
@@ -951,6 +977,7 @@
   var panel = "plans";
   var planId = null;
   var reviewNumber = null;
+  var roundArchiveOpen = false;
   var opening = null;
   var openingHand = null;
   var botTimer = null;
@@ -1154,6 +1181,20 @@
     if (event.type === "handEnd") return `\u7B2C ${event.handNumber} \u526F\u7ED3\u675F \xB7 ${event.team === 0 ? "\u6211\u65B9" : "\u5BF9\u65B9"}\u5347\u7EA7 ${event.climbed} \u7EA7`;
     return event.type;
   }
+  function roundActionHTML(event, index, view) {
+    const cards = event.type === "play" ? (event.cards || []).map(cardLabel).join(" ") : "";
+    return `<li class="round-action ${seatTone(event.seat)}"><span class="round-order">${String(index + 1).padStart(2, "0")}</span><span class="round-actor">${nameFor(view, event.seat)}</span><span class="round-action-detail">${event.type === "pass" ? "<em>\u8FC7\u724C</em>" : `<strong>${TYPE_LABELS[event.move?.type] || "\u51FA\u724C"}</strong><span class="round-card-text">${escapeHTML(cards)}</span>`}</span></li>`;
+  }
+  function roundBlockHTML(round, view, current = false) {
+    const state = round.completed ? `\xB7 ${nameFor(view, round.winnerSeat)}\u6536\u4E0B` : "\xB7 \u8FDB\u884C\u4E2D";
+    return `<div class="round-block ${current ? "round-current" : ""}"><div class="round-block-head"><strong>\u7B2C ${round.number} \u8F6E</strong><span>${state}</span></div><ol class="round-action-list">${round.actions.map((event, index) => roundActionHTML(event, index, view)).join("")}</ol></div>`;
+  }
+  function roundHistoryHTML(view) {
+    const rounds = roundsForHand(view.events, view.handNumber);
+    const latest = rounds[rounds.length - 1];
+    const earlier = rounds.slice(0, -1).reverse();
+    return `<section class="round-ledger" aria-label="\u672C\u526F\u51FA\u724C\u987A\u5E8F"><div class="round-ledger-head"><div><span class="eyebrow">THIS HAND</span><h2>\u672C\u526F\u51FA\u724C\u987A\u5E8F</h2></div><span class="round-count">${rounds.length} \u8F6E</span></div>${latest ? roundBlockHTML(latest, view, true) : '<p class="round-empty">\u8FD8\u6CA1\u6709\u4EBA\u51FA\u724C\uFF1B\u6BCF\u4E00\u6B65\u4F1A\u6309\u5148\u540E\u987A\u5E8F\u7559\u5728\u8FD9\u91CC\u3002</p>'}${earlier.length ? `<button class="round-archive-toggle" data-action="round-archive" aria-expanded="${roundArchiveOpen}">${roundArchiveOpen ? "\u6536\u8D77" : "\u56DE\u770B"}\u6B64\u524D ${earlier.length} \u8F6E <span aria-hidden="true">${roundArchiveOpen ? "\u2191" : "\u2193"}</span></button>${roundArchiveOpen ? `<div class="round-archive">${earlier.map((round) => roundBlockHTML(round, view)).join("")}</div>` : ""}` : ""}</section>`;
+  }
   function homeHTML() {
     const saved = savedGame();
     const botChoice = (seat, label) => `<label class="bot-choice" for="bot-difficulty-${seat}"><span>${label}</span><select id="bot-difficulty-${seat}" aria-label="${label}\u96BE\u5EA6">${Object.entries(difficultyName).map(([id, name]) => `<option value="${id}" ${saved?.match?.players?.[seat]?.difficulty === id ? "selected" : ""}>${name}</option>`).join("")}</select></label>`;
@@ -1191,7 +1232,6 @@
     const declarationHTML = view.phase === "playing" && move.options?.length > 1 ? `<div class="declaration-choices" aria-label="\u9009\u62E9\u9022\u4EBA\u914D\u724C\u578B"><span>\u8FD9\u7EC4\u724C\u53EF\u7533\u62A5\u4E3A</span>${move.options.map((option) => `<button type="button" data-action="declaration" data-key="${moveKey(option)}" aria-pressed="${moveKey(option) === moveKey(move.move)}" class="declaration-choice ${moveKey(option) === moveKey(move.move) ? "active" : ""}" ${beats(option, view.lastPlay) ? "" : "disabled"}>${TYPE_LABELS[option.type]} \xB7 ${levelName(option.mainRank)}</button>`).join("")}</div>` : "";
     const handById = new Map(view.hand.map((card) => [card.id, card]));
     const ordered = cardOrder.map((id) => handById.get(id)).filter(Boolean);
-    const half = Math.ceil(ordered.length / 2);
     const advice = recommend(view, 0);
     const lastPlayEvent = view.lastPlay ? [...view.events].reverse().find((item) => item.type === "play" && item.seat === view.lastSeat) : null;
     const cue = recentBotAction;
@@ -1204,7 +1244,8 @@
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
   <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
   <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
-  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-row" aria-label="\u624B\u724C\u4E0A\u6392">${ordered.slice(0, half).map(cardHTML).join("")}</div><div class="hand-row" aria-label="\u624B\u724C\u4E0B\u6392">${ordered.slice(half).map((card, index) => cardHTML(card, half + index)).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
+  ${roundHistoryHTML(view)}
+  <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(advice, view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
@@ -1240,12 +1281,8 @@
     }).join("")}</ol></div>`;
   }
   function render() {
-    const scrollers = [...root.querySelectorAll(".hand-row")].map((el) => el.scrollLeft);
     root.innerHTML = screen === "game" && match ? gameHTML() : homeHTML();
     botCueFresh = false;
-    if (screen === "game") root.querySelectorAll(".hand-row").forEach((el, index) => {
-      el.scrollLeft = scrollers[index] || 0;
-    });
     ensureModelAssistance();
   }
   function afterAction() {
@@ -1315,6 +1352,7 @@
         openingHand = null;
         panel = "plans";
         reviewNumber = null;
+        roundArchiveOpen = false;
         resetModelAssistance();
         screen = "game";
         afterAction();
@@ -1328,6 +1366,7 @@
         cardOrder = saved.cardOrder || [];
         openingHand = null;
         reviewNumber = null;
+        roundArchiveOpen = false;
         resetModelAssistance();
         screen = "game";
         render();
@@ -1349,6 +1388,11 @@
         modelError = null;
         render();
         scheduleBot();
+        return;
+      }
+      if (action === "round-archive") {
+        roundArchiveOpen = !roundArchiveOpen;
+        render();
         return;
       }
       if (action === "model-retry") {
@@ -1401,6 +1445,7 @@
         cardOrder = [];
         openingHand = null;
         panel = "plans";
+        roundArchiveOpen = false;
         afterAction();
         return;
       }
