@@ -266,7 +266,7 @@
       function teamOf(seat) {
         return seat % 2;
       }
-      function recommend2(visible2, seat) {
+      function recommend(visible2, seat) {
         if (!visible2 || !visible2.hand || visible2.turn !== seat || visible2.phase !== "playing") return { actions: [], note: "\u7B49\u5F85\u4F60\u7684\u56DE\u5408\u3002" };
         const candidates = legalMoves(visible2.hand, visible2.levelRank, visible2.lastPlay);
         const teammate = teammateOf(seat);
@@ -321,7 +321,7 @@
         }).slice(0, 2).map(({ score, power, ...choice }) => choice);
         return { actions, note: "\u57FA\u4E8E\u4F60\u7684\u624B\u724C\u548C\u724C\u684C\u516C\u5F00\u4FE1\u606F\uFF1B\u5176\u4ED6\u4EBA\u7684\u624B\u724C\u672A\u53C2\u4E0E\u8BA1\u7B97\u3002" };
       }
-      module.exports = { recommend: recommend2 };
+      module.exports = { recommend };
     }
   });
 
@@ -567,7 +567,7 @@
     "miniprogram/lib/match.js"(exports, module) {
       var { createDeck, shuffle, sortCards: sortCards2, rankPower, legalReturnCards: legalReturnCards2, cardLabel: cardLabel2 } = require_cards();
       var { classifyOptions: classifyOptions2, moveKey: moveKey2, beats: beats2 } = require_rules();
-      var { recommend: recommend2 } = require_coach();
+      var { recommend } = require_coach();
       var { DIFFICULTIES, chooseBotAction, chooseReturnCard } = require_bot();
       function teamOf(seat) {
         return seat % 2;
@@ -694,7 +694,7 @@
         addEvent(state, { type: "handEnd", ...result });
         for (const snapshot of state.decisionSnapshots.filter((item) => item.handNumber === state.handNumber)) {
           const event = state.events.find((item) => item.number === snapshot.eventNumber);
-          const advice = recommend2(snapshot.visible, snapshot.seat);
+          const advice = recommend(snapshot.visible, snapshot.seat);
           state.reviewsBySeat[snapshot.seat].push({
             handNumber: snapshot.handNumber,
             eventNumber: snapshot.eventNumber,
@@ -956,14 +956,50 @@
     }
   });
 
+  // web/model-reasons.js
+  var require_model_reasons = __commonJS({
+    "web/model-reasons.js"(exports, module) {
+      function modelChoiceReason2(choice, view) {
+        const lastSeat = view.lastSeat;
+        const partnerLeads = lastSeat === 2;
+        const opponentLeads = lastSeat === 1 || lastSeat === 3;
+        const opponentCount = opponentLeads ? view.handCounts?.[lastSeat] : null;
+        if (choice.pass) {
+          if (partnerLeads) return "\u961F\u53CB\u6B63\u5360\u7740\u8FD9\u4E00\u8F6E\uFF1B\u8FC7\u724C\u4E0D\u4F1A\u6D88\u8017\u4F60\u7684\u624B\u724C\uFF0C\u4E5F\u4E0D\u4F1A\u4E3B\u52A8\u538B\u8FC7\u961F\u53CB\u3002";
+          if (opponentCount != null && opponentCount <= 5) return `\u4E0D\u6D88\u8017\u624B\u724C\uFF0C\u4F46\u5F53\u524D\u538B\u4F4F\u724C\u684C\u7684\u5BF9\u624B\u53EA\u5269 ${opponentCount} \u5F20\uFF1B\u8FD9\u4E00\u8F6E\u6682\u4E0D\u4E89\u724C\u6743\u3002`;
+          return "\u4E0D\u6D88\u8017\u624B\u724C\uFF0C\u4FDD\u7559\u73B0\u6709\u7EC4\u5408\uFF1B\u4EE3\u4EF7\u662F\u8FD9\u4E00\u8F6E\u6682\u4E0D\u4E89\u724C\u6743\u3002";
+        }
+        const used = new Set(choice.cardIds || []);
+        const count = used.size;
+        const remaining = Math.max(0, (view.hand?.length || 0) - count);
+        if (!count) return "\u8FD9\u624B\u724C\u7684\u53EF\u89C1\u5229\u5F0A\u6682\u65F6\u65E0\u6CD5\u8BA1\u7B97\u3002";
+        let reason;
+        if (remaining === 0) reason = "\u8FD9\u624B\u53EF\u4EE5\u51FA\u5B8C\u4F60\u5269\u4F59\u7684\u5168\u90E8\u624B\u724C\u3002";
+        else if (partnerLeads) reason = `\u4E00\u6B21\u8D70\u6389 ${count} \u5F20\uFF0C\u4F46\u4F1A\u538B\u8FC7\u961F\u53CB\u5F53\u524D\u7684\u724C\uFF0C\u9700\u8981\u6743\u8861\u56E2\u961F\u724C\u6743\u3002`;
+        else if (opponentCount != null && opponentCount <= 5) reason = `\u5F53\u524D\u538B\u4F4F\u724C\u684C\u7684\u5BF9\u624B\u53EA\u5269 ${opponentCount} \u5F20\uFF1B\u8FD9\u624B\u53EF\u4EE5\u538B\u4F4F\u5F53\u524D\u51FA\u724C\uFF0C\u4E89\u593A\u724C\u6743\u3002`;
+        else if (opponentLeads) reason = `\u8FD9\u624B\u53EF\u4EE5\u538B\u4F4F\u5BF9\u624B\uFF0C\u4E89\u593A\u4E0B\u4E00\u624B\u7684\u9886\u51FA\u673A\u4F1A\uFF1B\u540C\u65F6\u8D70\u6389 ${count} \u5F20\u3002`;
+        else reason = `\u4F60\u6765\u9886\u51FA\uFF0C\u4E00\u6B21\u8D70\u6389 ${count} \u5F20\uFF1B\u51FA\u5B8C\u540E\u8FD8\u5269 ${remaining} \u5F20\u3002`;
+        const type = choice.declaration?.type;
+        if (type === "bomb") reason += " \u9700\u8981\u7528\u6389\u4E00\u7EC4\u70B8\u5F39\u3002";
+        else if (type === "straightFlush") reason += " \u9700\u8981\u7528\u6389\u4E00\u7EC4\u540C\u82B1\u987A\u3002";
+        else if (type === "jokerBomb") reason += " \u9700\u8981\u7528\u6389\u56DB\u738B\u70B8\u3002";
+        if ((view.hand || []).some((card) => used.has(card.id) && card.rank === view.levelRank && card.suit === "H") && count > 2) {
+          reason += " \u5176\u4E2D\u7528\u5230\u4E86\u9022\u4EBA\u914D\u3002";
+        }
+        return reason;
+      }
+      module.exports = { modelChoiceReason: modelChoiceReason2 };
+    }
+  });
+
   // web/app.js
   var { createMatch, startNextHand, returnTribute, play, pass, autoAction, viewFor } = require_match();
   var { cardLabel, sortCards, legalReturnCards } = require_cards();
   var { classifyOptions, moveKey, beats, TYPE_LABELS } = require_rules();
-  var { recommend } = require_coach();
   var { openingAnalysis } = require_planner();
   var { reviewView, reviewActual } = require_danzero_review();
   var { roundsForHand } = require_round_history();
+  var { modelChoiceReason } = require_model_reasons();
   var STORAGE = "guandan-web-solo-v1";
   var BOT_STEP_DELAY_MS = 1450;
   var BOT_CUE_DURATION_MS = 1300;
@@ -1145,7 +1181,8 @@
     return `${TYPE_LABELS[choice.declaration?.type] || "\u51FA\u724C"} \xB7 ${cards.map(cardLabel).join(" ")}`;
   }
   function modelScore(score) {
-    return Number(score).toFixed(2);
+    const value = Number(score);
+    return (Math.abs(value) < 5e-3 ? 0 : value).toFixed(2);
   }
   function syncOrder(view) {
     const ids = new Set(view.hand.map((card) => card.id));
@@ -1232,7 +1269,6 @@
     const declarationHTML = view.phase === "playing" && move.options?.length > 1 ? `<div class="declaration-choices" aria-label="\u9009\u62E9\u9022\u4EBA\u914D\u724C\u578B"><span>\u8FD9\u7EC4\u724C\u53EF\u7533\u62A5\u4E3A</span>${move.options.map((option) => `<button type="button" data-action="declaration" data-key="${moveKey(option)}" aria-pressed="${moveKey(option) === moveKey(move.move)}" class="declaration-choice ${moveKey(option) === moveKey(move.move) ? "active" : ""}" ${beats(option, view.lastPlay) ? "" : "disabled"}>${TYPE_LABELS[option.type]} \xB7 ${levelName(option.mainRank)}</button>`).join("")}</div>` : "";
     const handById = new Map(view.hand.map((card) => [card.id, card]));
     const ordered = cardOrder.map((id) => handById.get(id)).filter(Boolean);
-    const advice = recommend(view, 0);
     const lastPlayEvent = view.lastPlay ? [...view.events].reverse().find((item) => item.type === "play" && item.seat === view.lastSeat) : null;
     const cue = recentBotAction;
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
@@ -1246,7 +1282,7 @@
   <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
   ${roundHistoryHTML(view)}
   <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.difficulty === "danzero" ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
-  <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(advice, view) : historyHTML(view)}</aside></div></div>`;
+  <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(view) : historyHTML(view)}</aside></div></div>`;
   }
   function plansHTML(analysis, view) {
     const chosen = analysis.plans.find((item) => item.id === planId) || analysis.plans[0];
@@ -1256,11 +1292,11 @@
     const state = liveModelAnalysis?.key === currentDecisionKey(view) ? liveModelAnalysis : null;
     if (!state || state.status === "loading") return '<div class="model-assist"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE</strong><p>\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026</p></div>';
     if (state.status === "error") return `<div class="model-assist"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
-    return `<div class="model-assist"><div class="model-assist-head"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE</strong><span>${state.result.candidateCount} \u79CD\u5019\u9009</span></div><div class="model-choices">${state.result.choices.map((choice, index) => `<button class="model-choice" data-action="model-advice" data-index="${index}"><span>\u6A21\u578B\u7B2C ${index + 1} \u9009 \xB7 \u8BC4\u5206 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, view.hand))}</strong><small>${choice.pass ? "\u70B9\u6B64\u67E5\u770B\uFF0C\u518D\u7531\u4F60\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u6B64\u9009\u4E2D\u724C\uFF0C\u51FA\u724C\u4ECD\u7531\u4F60\u786E\u8BA4"} \u2192</small></button>`).join("")}</div><p class="model-caveat">\u8BC4\u5206\u53EA\u7528\u4E8E\u6BD4\u8F83\u5F53\u524D\u5019\u9009\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u6A21\u578B\u4E0D\u4F1A\u76F4\u63A5\u89E3\u91CA\u539F\u56E0\u3002\u4E0B\u65B9\u6587\u5B57\u5EFA\u8BAE\u662F\u72EC\u7ACB\u7684\u89C4\u5219\u5206\u6790\uFF0C\u53EF\u7528\u6765\u5BF9\u7167\u601D\u8DEF\u3002</p></div>`;
+    return `<div class="model-assist"><div class="model-assist-head"><strong>\u96BE\u5EA6\u4E09\u5EFA\u8BAE</strong><span>\u524D ${state.result.choices.length} / \u5171 ${state.result.candidateCount} \u79CD</span></div><p class="model-explanation-note">\u6309\u6A21\u578B\u8BC4\u5206\u6392\u5E8F\uFF1B\u53C2\u8003\u7406\u7531\u57FA\u4E8E\u53EF\u89C1\u724C\u9762\uFF0C\u5E76\u975E\u6A21\u578B\u7684\u5185\u90E8\u89E3\u91CA\u3002</p><div class="model-choices">${state.result.choices.map((choice, index) => `<button class="model-choice" data-action="model-advice" data-index="${index}"><span>\u6A21\u578B\u7B2C ${index + 1} \u9009 \xB7 \u8BC4\u5206 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, view.hand))}</strong><span class="model-choice-reason">\u53C2\u8003\u7406\u7531\uFF1A${escapeHTML(modelChoiceReason(choice, view))}</span><small>${choice.pass ? "\u70B9\u6B64\u67E5\u770B\uFF0C\u518D\u7531\u4F60\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u6B64\u9009\u4E2D\u724C\uFF0C\u51FA\u724C\u4ECD\u7531\u4F60\u786E\u8BA4"} \u2192</small></button>`).join("")}</div><p class="model-caveat">\u8BC4\u5206\u53EA\u6BD4\u8F83\u5F53\u524D\u5019\u9009\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u8BF7\u7ED3\u5408\u961F\u53CB\u548C\u5269\u4F59\u724C\u5224\u65AD\u3002</p></div>`;
   }
-  function adviceHTML(advice, view) {
+  function adviceHTML(view) {
     const active = view.phase === "playing" && view.turn === 0;
-    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">A SECOND OPINION</span><h2>\u8FD9\u4E00\u624B\uFF0C\u600E\u4E48\u60F3\uFF1F</h2><p>\u53EA\u7528\u4F60\u7684\u624B\u724C\u4E0E\u5F53\u65F6\u516C\u5F00\u4FE1\u606F\uFF0C\u96BE\u5EA6\u4E09\u6A21\u578B\u548C\u89C4\u5219\u5206\u6790\u5404\u7ED9\u4E00\u4E2A\u89C6\u89D2\u3002</p></div>${active ? `${modelAdviceHTML(view)}<div class="advice-list"><h3>\u89C4\u5219\u5206\u6790 \xB7 \u51FA\u724C\u601D\u8DEF</h3>${advice.actions.map((item, index) => `<button class="advice-card" data-action="advice" data-index="${index}"><span class="advice-number">\u601D\u8DEF 0${index + 1}</span><strong>${escapeHTML(item.label)}</strong><span>${escapeHTML(item.reason)}</span><small>${item.pass ? "\u70B9\u51FB\u540E\u4ECD\u9700\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u51FB\u9009\u4E2D\u624B\u724C\uFF0C\u4ECD\u9700\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C"} \u2192</small></button>`).join("")}</div>` : `<div class="empty-note"><span>\u25CC</span><strong>\u7B49\u8F6E\u5230\u4F60\uFF0C\u518D\u770B\u5EFA\u8BAE</strong><p>\u4F60\u53EF\u4EE5\u5148\u770B\u770B\u5F00\u5C40\u724C\u8DEF\uFF0C\u6216\u7FFB\u7FFB\u5DF2\u7ECF\u53D1\u751F\u7684\u51FA\u724C\u8BB0\u5F55\u3002</p></div>`}<p class="panel-footnote">${escapeHTML(advice.note)}</p></div>`;
+    return `<div class="panel-content"><div class="panel-intro"><span class="eyebrow">A SECOND OPINION</span><h2>\u8FD9\u4E00\u624B\uFF0C\u600E\u4E48\u60F3\uFF1F</h2><p>\u96BE\u5EA6\u4E09\u4EC5\u4F9D\u636E\u4F60\u7684\u624B\u724C\u548C\u724C\u684C\u516C\u5F00\u4FE1\u606F\uFF0C\u7ED9\u5F53\u524D\u5408\u6CD5\u51FA\u724C\u6392\u5E8F\u3002</p></div>${active ? modelAdviceHTML(view) : `<div class="empty-note"><span>\u25CC</span><strong>\u7B49\u8F6E\u5230\u4F60\uFF0C\u518D\u770B\u5EFA\u8BAE</strong><p>\u4F60\u53EF\u4EE5\u5148\u770B\u770B\u5F00\u5C40\u724C\u8DEF\uFF0C\u6216\u7FFB\u7FFB\u5DF2\u7ECF\u53D1\u751F\u7684\u51FA\u724C\u8BB0\u5F55\u3002</p></div>`}</div>`;
   }
   function modelReviewHTML(review) {
     const state = reviewModelAnalysis.get(review.eventNumber);
@@ -1467,21 +1503,6 @@
         save();
         render();
         inform(`\u5DF2\u6309\u201C${plan.title}\u201D\u7406\u724C`);
-        return;
-      }
-      if (action === "advice") {
-        const choice = recommend(view, 0).actions[Number(button.dataset.index)];
-        if (!choice) return;
-        if (choice.pass) {
-          clearSelection();
-          inform("\u5EFA\u8BAE\u8FC7\u724C\uFF1B\u8BF7\u70B9\u51FB\u724C\u684C\u4E0B\u65B9\u7684\u201C\u8FC7\u724C\u201D\u786E\u8BA4\u3002");
-        } else {
-          selected = new Set(choice.cardIds);
-          selectedDeclarationKey = choice.declaration ? moveKey(choice.declaration) : null;
-          panel = "advice";
-          inform("\u5DF2\u9009\u4E2D\u5EFA\u8BAE\u7684\u724C\uFF0C\u8BF7\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C\u3002");
-        }
-        render();
         return;
       }
       if (action === "model-advice") {
