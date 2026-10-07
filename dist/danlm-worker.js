@@ -1915,12 +1915,48 @@
       var { cardInt, actionVector, stateTokens } = require_danlm_encoding();
       var sessionPromise;
       var sessionReady = false;
+      var MODEL_BYTES = 8118870;
       ort.env.wasm.numThreads = 1;
       if (typeof self !== "undefined") ort.env.wasm.wasmPaths = new URL("./", self.location.href).href;
-      function modelSession() {
+      async function downloadModel(onProgress) {
+        const url = new URL("../models/danlm-v1-compact.onnx?v=20261007-compact", self.location.href).href;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`\u96BE\u5EA6\u56DB\u6A21\u578B\u4E0B\u8F7D\u5931\u8D25\uFF08${response.status}\uFF09`);
+        if (!response.body) {
+          const bytes2 = new Uint8Array(await response.arrayBuffer());
+          onProgress({ stage: "downloading", loaded: bytes2.length, total: MODEL_BYTES });
+          return bytes2;
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        let lastPercent = -1;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.length;
+          const percent = Math.min(100, Math.floor(loaded / MODEL_BYTES * 100));
+          if (percent > lastPercent) {
+            lastPercent = percent;
+            onProgress({ stage: "downloading", loaded, total: MODEL_BYTES });
+          }
+        }
+        const bytes = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return bytes;
+      }
+      function modelSession(onProgress = () => {
+      }) {
         if (!sessionPromise) {
-          const url = new URL("../models/danlm-v1.onnx?v=20261007", self.location.href).href;
-          sessionPromise = ort.InferenceSession.create(url, { executionProviders: ["wasm"] }).then((session) => {
+          sessionPromise = downloadModel(onProgress).then((bytes) => {
+            onProgress({ stage: "initializing" });
+            return ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+          }).then((session) => {
             sessionReady = true;
             return session;
           }).catch((error) => {
@@ -2007,7 +2043,21 @@
           queue = queue.then(async () => {
             try {
               if (!sessionReady) self.postMessage({ id, stage: "loading" });
-              const session = await modelSession();
+              const session = await modelSession((progress) => self.postMessage({ id, ...progress }));
+              if (mode === "warmup") {
+                self.postMessage({ id, stage: "verifying" });
+                const sample = {
+                  hand: [{ id: "warmup-3d", rank: 3, suit: "D" }],
+                  levelRank: 2,
+                  lastPlay: null,
+                  events: [],
+                  handNumber: 1,
+                  turn: 0
+                };
+                await decideWithSession(sample, "analysis", null, session);
+                self.postMessage({ id, ready: true });
+                return;
+              }
               self.postMessage({ id, stage: "running" });
               self.postMessage({ id, [mode === "analysis" ? "analysis" : "action"]: await decideWithSession(view, mode, actual, session) });
             } catch (error) {
@@ -2016,7 +2066,7 @@
           });
         };
       }
-      module.exports = { candidatesFor, scoreMoves, decide, decideWithSession };
+      module.exports = { MODEL_BYTES, candidatesFor, scoreMoves, decide, decideWithSession };
     }
   });
   require_danlm_worker();

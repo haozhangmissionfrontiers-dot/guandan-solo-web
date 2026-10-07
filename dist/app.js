@@ -761,7 +761,9 @@
   var root = document.getElementById("app");
   var toast = document.getElementById("toast");
   var match = null;
-  var screen = "home";
+  var screen = "loading";
+  var modelPreparation = { status: "loading", stage: "starting" };
+  var preparationAttempt = 0;
   var selected = /* @__PURE__ */ new Set();
   var selectedDeclarationKey = null;
   var cardOrder = [];
@@ -788,11 +790,14 @@
   var pendingModelRequests = /* @__PURE__ */ new Map();
   var liveModelAnalysis = null;
   var reviewModelAnalysis = /* @__PURE__ */ new Map();
-  var MODEL_TIMEOUT_MS = { starting: 45e3, queued: 24e4, loading: 24e4, running: 9e4 };
+  var MODEL_TIMEOUT_MS = { starting: 45e3, queued: 24e4, loading: 24e4, downloading: 24e4, initializing: 18e4, verifying: 9e4, running: 9e4 };
   var MODEL_TIMEOUT_MESSAGE = {
     starting: "\u96BE\u5EA6\u56DB\u6A21\u578B\u7EBF\u7A0B\u542F\u52A8\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5",
     queued: "\u96BE\u5EA6\u56DB\u5206\u6790\u7B49\u5F85\u8FC7\u4E45\uFF0C\u8BF7\u91CD\u8BD5",
-    loading: "\u96BE\u5EA6\u56DB\u6A21\u578B\u52A0\u8F7D\u8D85\u65F6\uFF08\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF09\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5",
+    loading: "\u96BE\u5EA6\u56DB\u6A21\u578B\u52A0\u8F7D\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5",
+    downloading: "\u96BE\u5EA6\u56DB\u6A21\u578B\u4E0B\u8F7D\u4E2D\u65AD\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5",
+    initializing: "\u96BE\u5EA6\u56DB\u63A8\u7406\u5F15\u64CE\u521D\u59CB\u5316\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5",
+    verifying: "\u96BE\u5EA6\u56DB\u6A21\u578B\u8FD0\u884C\u68C0\u67E5\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5",
     running: "\u96BE\u5EA6\u56DB\u63A8\u7406\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5"
   };
   function armModelTimeout(pending, stage) {
@@ -817,21 +822,21 @@
   function modelWorker() {
     if (modelWorkerInstance) return modelWorkerInstance;
     if (typeof Worker === "undefined") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u51FA\u724C\u5206\u6790\u6240\u9700\u7684\u540E\u53F0\u7EBF\u7A0B");
-    const worker = new Worker(new URL("./dist/danlm-worker.js?v=20261007-timeout-fix", document.baseURI));
+    const worker = new Worker(new URL("./dist/danlm-worker.js?v=20261007-compact-boot", document.baseURI));
     worker.onmessage = (event) => {
       const pending = pendingModelRequests.get(event.data.id);
       if (!pending) return;
       if (event.data.stage) {
         modelWorkerStage = event.data.stage;
         armModelTimeout(pending, event.data.stage);
-        pending.onProgress?.(event.data.stage);
+        pending.onProgress?.(event.data);
         return;
       }
       pendingModelRequests.delete(event.data.id);
       clearTimeout(pending.timer);
       modelWorkerStage = null;
       if (event.data.error) pending.reject(new Error(event.data.error));
-      else pending.resolve(event.data.analysis ?? event.data.action);
+      else pending.resolve(event.data.analysis ?? event.data.action ?? event.data.ready);
     };
     worker.onerror = () => {
       if (modelWorkerInstance === worker) stopModelWorker("\u96BE\u5EA6\u56DB\u6A21\u578B\u7EBF\u7A0B\u672A\u80FD\u542F\u52A8");
@@ -854,6 +859,27 @@
   }
   function requestModelAnalysis(view, actual = null, onProgress = null) {
     return requestModel("analysis", view, actual, onProgress);
+  }
+  function startModelPreparation() {
+    if (document.hidden) return;
+    const attempt = ++preparationAttempt;
+    screen = "loading";
+    modelPreparation = { status: "loading", stage: "starting" };
+    render();
+    requestModel("warmup", null, null, (progress) => {
+      if (attempt !== preparationAttempt || screen !== "loading") return;
+      modelPreparation = { status: "loading", stage: progress.stage, loaded: progress.loaded, total: progress.total };
+      render();
+    }).then(() => {
+      if (attempt !== preparationAttempt || screen !== "loading") return;
+      modelPreparation = { status: "ready" };
+      screen = "home";
+      render();
+    }).catch((error) => {
+      if (attempt !== preparationAttempt || document.hidden || screen !== "loading") return;
+      modelPreparation = { status: "error", error: error.message };
+      render();
+    });
   }
   function inform(message) {
     toast.textContent = message;
@@ -923,9 +949,9 @@
       if (liveModelAnalysis?.key === key) return;
       const attempt = /* @__PURE__ */ Symbol("live-analysis");
       liveModelAnalysis = { key, attempt, status: "loading" };
-      requestModelAnalysis(view, null, (stage) => {
+      requestModelAnalysis(view, null, (progress) => {
         if (match !== currentMatch || liveModelAnalysis?.attempt !== attempt) return;
-        liveModelAnalysis = { key, attempt, status: "loading", stage };
+        liveModelAnalysis = { key, attempt, status: "loading", stage: progress.stage };
         if (screen === "game" && panel === "advice") render();
       }).then((result) => {
         if (match !== currentMatch || liveModelAnalysis?.attempt !== attempt) return;
@@ -950,9 +976,9 @@
       const number = reviewNumber;
       const attempt = /* @__PURE__ */ Symbol("review-analysis");
       reviewModelAnalysis.set(number, { attempt, status: "loading" });
-      requestModelAnalysis(pastView, actual, (stage) => {
+      requestModelAnalysis(pastView, actual, (progress) => {
         if (match !== currentMatch || reviewModelAnalysis.get(number)?.attempt !== attempt) return;
-        reviewModelAnalysis.set(number, { attempt, status: "loading", stage });
+        reviewModelAnalysis.set(number, { attempt, status: "loading", stage: progress.stage });
         if (screen === "game" && panel === "history" && reviewNumber === number) render();
       }).then((result) => {
         if (match !== currentMatch || reviewModelAnalysis.get(number)?.attempt !== attempt) return;
@@ -1023,12 +1049,19 @@
     const earlier = rounds.slice(0, -1).reverse();
     return `<section class="round-ledger" aria-label="\u672C\u526F\u51FA\u724C\u987A\u5E8F"><div class="round-ledger-head"><div><span class="eyebrow">THIS HAND</span><h2>\u672C\u526F\u51FA\u724C\u987A\u5E8F</h2></div><span class="round-count">${rounds.length} \u8F6E</span></div>${latest ? roundBlockHTML(latest, view, true) : '<p class="round-empty">\u8FD8\u6CA1\u6709\u4EBA\u51FA\u724C\uFF1B\u6BCF\u4E00\u6B65\u4F1A\u6309\u5148\u540E\u987A\u5E8F\u7559\u5728\u8FD9\u91CC\u3002</p>'}${earlier.length ? `<button class="round-archive-toggle" data-action="round-archive" aria-expanded="${roundArchiveOpen}">${roundArchiveOpen ? "\u6536\u8D77" : "\u56DE\u770B"}\u6B64\u524D ${earlier.length} \u8F6E <span aria-hidden="true">${roundArchiveOpen ? "\u2191" : "\u2193"}</span></button>${roundArchiveOpen ? `<div class="round-archive">${earlier.map((round) => roundBlockHTML(round, view)).join("")}</div>` : ""}` : ""}</section>`;
   }
+  function loadingHTML() {
+    const state = modelPreparation;
+    const downloading = state.stage === "downloading" && state.total > 0;
+    const percent = ["initializing", "verifying"].includes(state.stage) ? 100 : downloading ? Math.min(100, Math.floor(state.loaded / state.total * 100)) : null;
+    const status = state.status === "error" ? "\u724C\u684C\u6682\u65F6\u6CA1\u51C6\u5907\u597D" : state.stage === "verifying" ? "\u6B63\u5728\u786E\u8BA4\u6A21\u578B\u53EF\u4EE5\u6B63\u5E38\u51FA\u724C\u2026" : state.stage === "initializing" ? "\u6A21\u578B\u5DF2\u4E0B\u8F7D\uFF0C\u6B63\u5728\u542F\u52A8\u63A8\u7406\u5F15\u64CE\u2026" : downloading ? `\u6B63\u5728\u4E0B\u8F7D\u6A21\u578B \xB7 ${percent}%` : "\u6B63\u5728\u51C6\u5907\u96BE\u5EA6\u56DB\u6A21\u578B\u2026";
+    return `<main class="boot"><header class="boot-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span>\u79C1\u4EBA\u7EC3\u4E60\u684C</span></header><section class="boot-content"><div class="boot-cards" aria-hidden="true"><span></span><span></span><span>\u2665</span></div><div class="boot-copy"><span class="boot-eyebrow">\u5F00\u5C40\u524D\uFF0C\u5148\u7406\u597D\u8FD9\u4E00\u624B</span><h1>\u724C\u684C\u9A6C\u4E0A<br><em>\u5C31\u7EEA\u3002</em></h1><p class="boot-status" role="status" aria-live="polite">${escapeHTML(status)}</p>${state.status === "error" ? `<p class="boot-error">${escapeHTML(state.error)}</p><button class="button primary big" data-action="retry-preparation">\u91CD\u65B0\u51C6\u5907\u724C\u684C \u2197</button>` : `<div class="boot-meter" role="progressbar" aria-label="\u6A21\u578B\u4E0B\u8F7D\u8FDB\u5EA6" ${percent == null ? "" : `aria-valuenow="${percent}"`} aria-valuemin="0" aria-valuemax="100"><span style="width:${percent == null ? 8 : percent}%" class="${percent == null ? "indeterminate" : ""}"></span></div><p class="boot-detail">${state.stage === "initializing" ? "\u4E0B\u8F7D\u5DF2\u5B8C\u6210\uFF0C\u6B63\u5728\u542F\u52A8\u63A8\u7406\u7EC4\u4EF6\u3002" : state.stage === "verifying" ? "\u6A21\u578B\u4E0E\u63A8\u7406\u7EC4\u4EF6\u5DF2\u52A0\u8F7D\uFF0C\u6B63\u5728\u505A\u6700\u540E\u68C0\u67E5\u3002" : "\u9996\u6B21\u7F51\u7EDC\u4F20\u8F93\u7EA6 11 MB\uFF1B\u51C6\u5907\u5B8C\u6210\u540E\u624D\u4F1A\u8FDB\u5165\u6E38\u620F\u3002"}</p>`}</div></section><footer class="boot-footer">\u4F60\u7684\u724C\u5C40\u7559\u5728\u6B64\u6D4F\u89C8\u5668\uFF0C\u4E0D\u4F1A\u56E0\u4E3A\u7B49\u5F85\u800C\u4E22\u5931\u3002</footer></main>`;
+  }
   function homeHTML() {
     const saved = savedGame();
     return `<main class="home">
     <div class="home-grain" aria-hidden="true"></div>
     <header class="home-top"><div class="brand-mark">\u60EF<span>\u86CB</span></div><span class="eyebrow">A LITTLE GAME, A BETTER MOVE</span></header>
-    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><p class="model-info">\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u7EDF\u4E00\u4F7F\u7528\u96BE\u5EA6\u56DB\uFF1B\u51FA\u724C\u5EFA\u8BAE\u4E0E\u590D\u76D8\u4E5F\u7531\u5B83\u63D0\u4F9B\u3002\u9996\u6B21\u9700\u52A0\u8F7D\u7EA6 30 MB\u3002</p><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
+    <section class="home-hero"><div class="hero-copy"><div class="hero-kicker"><span class="pulse-dot"></span> \u79C1\u4EBA\u7EC3\u4E60\u684C \xB7 \u968F\u65F6\u5F00\u5C40</div><h1>\u597D\u724C\uFF0C<br><em>\u6084\u6084</em>\u7EC3\u51FA\u6765\u3002</h1><p>\u4ECE 2 \u6253\u5230 A\uFF0C\u548C\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u5B8C\u6574\u6253\u4E0A\u4E00\u573A\u3002\u7406\u597D\u6BCF\u4E00\u624B\uFF0C\u770B\u6E05\u4E0B\u4E00\u6B65\uFF0C\u6253\u5B8C\u518D\u590D\u76D8\u3002</p><div class="home-form"><label for="player-name">\u724C\u684C\u4E0A\u600E\u4E48\u79F0\u547C\u4F60\uFF1F</label><input id="player-name" name="player-name" maxlength="12" value="${escapeHTML(saved?.match?.players?.[0]?.name || "\u5C0F\u724C\u624B")}" autocomplete="nickname"><p class="model-info">\u4E09\u4F4D\u7535\u8111\u724C\u53CB\u7EDF\u4E00\u4F7F\u7528\u96BE\u5EA6\u56DB\uFF1B\u6A21\u578B\u4F1A\u5728\u8FDB\u5165\u9996\u9875\u524D\u51C6\u5907\u597D\u3002</p><button class="button primary big" data-action="new">\u5F00\u59CB\u5355\u4EBA\u7EC3\u4E60 <span aria-hidden="true">\u2197</span></button>${saved ? '<button class="button text-button" data-action="continue">\u7EE7\u7EED\u4E0A\u6B21\u724C\u5C40 \u2192</button>' : ""}</div><div class="home-note"><span>\u2726 \u4E0D\u7528\u6CE8\u518C</span><span>\u2726 \u724C\u5C40\u4EC5\u4FDD\u5B58\u5728\u6B64\u6D4F\u89C8\u5668</span><span>\u2726 \u684C\u9762\u4E0D\u5C55\u793A\u7535\u8111\u624B\u724C</span></div></div><div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-card art-back"></div><div class="art-card art-front"><span class="art-corner">A<br>\u2665</span><span class="art-heart">\u2665</span><span class="art-bottom">A<br>\u2665</span></div><div class="art-spark spark-one">\u2726</div><div class="art-spark spark-two">\u2726</div><div class="art-note">\u4ECA\u5929\u4E5F\u8981<br>\u5077\u5077\u53D8\u5F3A</div></div></section>
     <footer class="home-footer"><span>\u63BC\u86CB \xB7 \u5355\u4EBA\u7F51\u9875\u7248</span><span>\u7ED9\u7231\u7422\u78E8\u6BCF\u4E00\u624B\u7684\u4EBA</span></footer>
   </main>`;
   }
@@ -1064,7 +1097,7 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
-    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : modelWorkerStage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\uFF0C\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
+    const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : ["loading", "downloading", "initializing"].includes(modelWorkerStage) ? "\u6B63\u5728\u51C6\u5907\u96BE\u5EA6\u56DB\u6A21\u578B\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
@@ -1080,7 +1113,7 @@
   }
   function modelAdviceHTML(view) {
     const state = liveModelAnalysis?.key === currentDecisionKey(view) ? liveModelAnalysis : null;
-    if (!state || state.status === "loading") return `<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF</strong><p>${state?.stage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\u3002\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026"}</p></div>`;
+    if (!state || state.status === "loading") return `<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF</strong><p>${["loading", "downloading", "initializing"].includes(state?.stage) ? "\u6B63\u5728\u51C6\u5907\u96BE\u5EA6\u56DB\u6A21\u578B\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u6309\u5F53\u524D\u5C40\u9762\u5206\u6790\u5408\u6CD5\u51FA\u724C\u2026"}</p></div>`;
     if (state.status === "error") return `<div class="model-assist"><strong>\u51FA\u724C\u601D\u8DEF\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
     return `<div class="model-assist"><div class="model-assist-head"><strong>\u51FA\u724C\u601D\u8DEF</strong><span>\u524D ${state.result.choices.length} / \u5171 ${state.result.candidateCount} \u79CD</span></div><p class="model-explanation-note">\u6309\u6A21\u578B\u8BC4\u5206\u6392\u5E8F\uFF1B\u53C2\u8003\u7406\u7531\u57FA\u4E8E\u53EF\u89C1\u724C\u9762\uFF0C\u5E76\u975E\u6A21\u578B\u7684\u5185\u90E8\u89E3\u91CA\u3002</p><div class="model-choices">${state.result.choices.map((choice, index) => `<button class="model-choice" data-action="model-advice" data-index="${index}"><span>\u7B2C ${index + 1} \u9009 \xB7 \u8BC4\u5206 ${modelScore(choice.score)}</span><strong>${escapeHTML(modelActionLabel(choice, view.hand))}</strong><span class="model-choice-reason">\u53C2\u8003\u7406\u7531\uFF1A${escapeHTML(modelChoiceReason(choice, view))}</span><small>${choice.pass ? "\u70B9\u6B64\u67E5\u770B\uFF0C\u518D\u7531\u4F60\u786E\u8BA4\u8FC7\u724C" : "\u70B9\u6B64\u9009\u4E2D\u724C\uFF0C\u51FA\u724C\u4ECD\u7531\u4F60\u786E\u8BA4"} \u2192</small></button>`).join("")}</div><p class="model-caveat">\u8BC4\u5206\u53EA\u6BD4\u8F83\u5F53\u524D\u5019\u9009\uFF0C\u4E0D\u662F\u80DC\u7387\uFF1B\u8BF7\u7ED3\u5408\u961F\u53CB\u548C\u5269\u4F59\u724C\u5224\u65AD\u3002</p></div>`;
   }
@@ -1090,7 +1123,7 @@
   }
   function modelReviewHTML(review) {
     const state = reviewModelAnalysis.get(review.eventNumber);
-    if (!state || state.status === "loading") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>${state?.stage === "loading" ? "\u6B63\u5728\u52A0\u8F7D\u96BE\u5EA6\u56DB\u6A21\u578B\u3002\u9996\u6B21\u7EA6\u9700\u4E0B\u8F7D 30 MB\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026"}</p></div>`;
+    if (!state || state.status === "loading") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>${["loading", "downloading", "initializing"].includes(state?.stage) ? "\u6B63\u5728\u51C6\u5907\u96BE\u5EA6\u56DB\u6A21\u578B\uFF0C\u8BF7\u4FDD\u6301\u9875\u9762\u6253\u5F00\u2026" : state?.stage === "queued" ? "\u6B63\u5728\u7B49\u5F85\u6A21\u578B\u5904\u7406\u524D\u4E00\u9879\u5206\u6790\u2026" : "\u6B63\u5728\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u5E76\u8BC4\u5206\u2026"}</p></div>`;
     if (state.status === "unavailable") return '<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8</strong><p>\u8FD9\u6B65\u65E7\u8BB0\u5F55\u7F3A\u5C11\u5FC5\u8981\u4FE1\u606F\uFF0C\u65E0\u6CD5\u5B89\u5168\u91CD\u5EFA\u5F53\u65F6\u5C40\u9762\u3002</p></div>';
     if (state.status === "error") return `<div class="model-retro"><strong>\u51FA\u724C\u590D\u76D8\u6682\u4E0D\u53EF\u7528</strong><p>${escapeHTML(state.error)}</p><button class="button outline" data-action="model-retry">\u91CD\u8BD5\u5206\u6790</button></div>`;
     const best = state.result.choices[0];
@@ -1107,7 +1140,7 @@
     }).join("")}</ol></div>`;
   }
   function render() {
-    root.innerHTML = screen === "game" && match ? gameHTML() : homeHTML();
+    root.innerHTML = screen === "loading" ? loadingHTML() : screen === "game" && match ? gameHTML() : homeHTML();
     botCueFresh = false;
     ensureModelAssistance();
   }
@@ -1167,8 +1200,11 @@
         resetModelAssistance();
       }
     } else {
-      render();
-      scheduleBot();
+      if (screen === "loading" && modelPreparation.status !== "ready") startModelPreparation();
+      else {
+        render();
+        scheduleBot();
+      }
     }
   });
   root.addEventListener("click", (event) => {
@@ -1176,6 +1212,12 @@
     if (!button || button.disabled) return;
     const action = button.dataset.action;
     try {
+      if (action === "retry-preparation") {
+        stopModelWorker("\u91CD\u65B0\u51C6\u5907\u6A21\u578B");
+        startModelPreparation();
+        return;
+      }
+      if (screen === "loading") return;
       if (action === "new") {
         const name = document.getElementById("player-name")?.value.trim().slice(0, 12) || "\u5C0F\u724C\u624B";
         match = createMatch([{ id: "you", name, bot: false }, { id: "left", name: "\u963F\u5DE6", bot: true, difficulty: "danlm" }, { id: "partner", name: "\u642D\u5B50", bot: true, difficulty: "danlm" }, { id: "right", name: "\u963F\u53F3", bot: true, difficulty: "danlm" }]);
@@ -1330,4 +1372,5 @@
     }
   });
   render();
+  startModelPreparation();
 })();
