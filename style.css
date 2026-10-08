@@ -47,6 +47,17 @@
 .model-choice .model-choice-reason{font-size:11px;line-height:1.55;color:#486856;font-weight:500}
 .model-assist .model-explanation-note{margin-top:9px;color:#557063}
 .model-assist .model-caveat{margin-top:12px;color:#6f8376}
+.decision-lesson,.review-lesson{margin-top:12px;padding:12px;border:1px solid #d7e4d6;border-radius:10px;background:#fffdf8}
+.decision-lesson span,.review-lesson span{display:block;font-size:10px;font-weight:800;letter-spacing:.03em;color:#8c6c42}
+.decision-lesson p,.review-lesson p{margin:4px 0 0;font-size:11px;line-height:1.55;color:#254737}
+.decision-situation{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.decision-tradeoff{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:11px}
+.decision-tradeoff>div{padding:9px;border-radius:8px;background:#f2f7f1}
+.decision-tradeoff>div+div{background:#faf3ec}
+.decision-compare,.decision-question{padding-top:10px;border-top:1px solid #e4e9dc}
+.decision-compare span,.decision-question span{margin-bottom:3px}
+.review-lesson span:not(:first-child){margin-top:10px}
+@media(max-width:420px){.decision-tradeoff{grid-template-columns:1fr;gap:6px}}
 .advice-list h3{font-size:12px;color:#456451;margin:12px 0 2px}
 .model-review-choices{display:grid;gap:7px;margin:10px 0}
 .model-review-choices>div{display:flex;flex-direction:column;gap:3px;padding:8px 10px;background:#fff;border:1px solid #dce8d9;border-radius:7px}
