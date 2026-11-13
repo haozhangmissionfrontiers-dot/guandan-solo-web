@@ -817,6 +817,7 @@
   var recentBotAction = null;
   var botCueFresh = false;
   var toastTimer = null;
+  var actionMotion = null;
   var escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   var nameFor = (view, seat) => seat === 0 ? "\u4F60" : escapeHTML(view.players[seat].name);
   var levelName = (rank) => rank === 14 ? "A" : rank === 13 ? "K" : rank === 12 ? "Q" : rank === 11 ? "J" : String(rank);
@@ -969,6 +970,19 @@
       if (screen === "game") render();
     }, BOT_CUE_DURATION_MS);
   }
+  function queueActionMotion(events) {
+    const action = events.find((event) => event.type === "play" || event.type === "pass");
+    const handEnd = events.find((event) => event.type === "handEnd");
+    const newTurn = match?.phase === "playing" ? match.turn : null;
+    actionMotion = {
+      actionNumber: action?.number ?? null,
+      turnSeat: newTurn,
+      trickEnded: events.some((event) => event.type === "trickEnd"),
+      handEnd,
+      specialType: action?.type === "play" && ["bomb", "straightFlush", "jokerBomb"].includes(action.move?.type) ? action.move.type : null,
+      specialSeat: action?.seat ?? null
+    };
+  }
   function visible() {
     return viewFor(match, 0);
   }
@@ -1076,11 +1090,11 @@
   }
   function roundActionHTML(event, index, view) {
     const cards = event.type === "play" ? (event.cards || []).map(cardLabel).join(" ") : "";
-    return `<li class="round-action ${seatTone(event.seat)}"><span class="round-order">${String(index + 1).padStart(2, "0")}</span><span class="round-actor">${nameFor(view, event.seat)}</span><span class="round-action-detail">${event.type === "pass" ? "<em>\u8FC7\u724C</em>" : `<strong>${TYPE_LABELS[event.move?.type] || "\u51FA\u724C"}</strong><span class="round-card-text">${escapeHTML(cards)}</span>`}</span></li>`;
+    return `<li class="round-action ${seatTone(event.seat)} ${event.number === actionMotion?.actionNumber ? "action-fresh" : ""}"><span class="round-order">${String(index + 1).padStart(2, "0")}</span><span class="round-actor">${nameFor(view, event.seat)}</span><span class="round-action-detail">${event.type === "pass" ? "<em>\u8FC7\u724C</em>" : `<strong>${TYPE_LABELS[event.move?.type] || "\u51FA\u724C"}</strong><span class="round-card-text">${escapeHTML(cards)}</span>`}</span></li>`;
   }
   function roundBlockHTML(round, view, current = false) {
     const state = round.completed ? `\xB7 ${nameFor(view, round.winnerSeat)}\u6536\u4E0B` : "\xB7 \u8FDB\u884C\u4E2D";
-    return `<div class="round-block ${current ? "round-current" : ""}"><div class="round-block-head"><strong>\u7B2C ${round.number} \u8F6E</strong><span>${state}</span></div><ol class="round-action-list">${round.actions.map((event, index) => roundActionHTML(event, index, view)).join("")}</ol></div>`;
+    return `<div class="round-block ${current ? "round-current" : ""} ${current && actionMotion?.trickEnded ? "round-fresh" : ""}"><div class="round-block-head"><strong>\u7B2C ${round.number} \u8F6E</strong><span>${state}</span></div><ol class="round-action-list">${round.actions.map((event, index) => roundActionHTML(event, index, view)).join("")}</ol></div>`;
   }
   function roundHistoryHTML(view) {
     const rounds = roundsForHand(view.events, view.handNumber);
@@ -1108,7 +1122,7 @@
     const finished = view.finishOrder.indexOf(seat);
     const active = view.phase === "playing" && view.turn === seat;
     const recent = recentBotAction?.seat === seat;
-    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
+    return `<div class="player ${position} ${seatTone(seat)} ${active ? "active" : ""} ${recent ? "recent" : ""} ${recent && botCueFresh ? "cue-fresh" : ""} ${active && actionMotion?.turnSeat === seat ? "turn-fresh" : ""}"><div class="avatar">${seat === 2 ? "\u53CB" : seat === 1 ? "\u5DE6" : "\u53F3"}</div><div class="player-info"><strong>${nameFor(view, seat)}</strong><span>${seat === 2 ? "\u4F60\u7684\u961F\u53CB" : "\u7535\u8111\u5BF9\u624B"} \xB7 ${finished >= 0 ? `\u7B2C${finished + 1}\u540D\u8D70\u5B8C` : `\u4F59 ${view.handCounts[seat]} \u5F20`}</span></div>${active ? '<i class="turn-indicator" aria-label="\u5F53\u524D\u51FA\u724C"></i>' : ""}</div>`;
   }
   function currentMove(view) {
     const cards = view.hand.filter((card) => selected.has(card.id));
@@ -1136,12 +1150,14 @@
     const cueHTML = cue ? `<div class="action-cue ${botCueFresh ? "cue-fresh" : ""}" aria-hidden="true"><span class="cue-symbol">\u2726</span>${escapeHTML(view.players[cue.seat].name)} \xB7 ${escapeHTML(cue.label)}</div>` : "";
     const direction = view.lastSeat === 1 ? "from-left" : view.lastSeat === 3 ? "from-right" : view.lastSeat === 2 ? "from-top" : "from-bottom";
     const playedCardsHTML = (lastPlayEvent?.cards || []).map((card, index) => `<span class="mini-card ${card.suit === "H" || card.suit === "D" ? "red" : ""}" style="--i:${Math.min(index, 6)}">${escapeHTML(cardLabel(card))}</span>`).join("");
+    const specialPlay = actionMotion?.specialType && actionMotion.specialSeat === view.lastSeat && actionMotion.specialType === view.lastPlay?.type;
+    const powerBurstHTML = specialPlay ? `<span class="power-burst" aria-hidden="true">${Array.from({ length: 8 }, (_, index) => `<i style="--angle:${index * 45}deg"></i>`).join("")}</span>` : "";
     const ordinaryStatus = modelError && view.phase === "playing" && view.players[view.turn]?.bot ? modelError : view.phase === "complete" ? view.winnerTeam === 0 ? "\u606D\u559C\uFF0C\u6211\u65B9\u8FC7 A\uFF01" : "\u5BF9\u65B9\u8FC7 A\uFF0C\u6574\u573A\u7ED3\u675F" : view.phase === "between" ? "\u672C\u526F\u7ED3\u675F\uFF0C\u67E5\u770B\u590D\u76D8\u6216\u7EE7\u7EED" : returning ? returnFallback ? "\u65E0\u5408\u683C\u5C0F\u724C\uFF0C\u53EF\u8FD8\u5176\u4ED6\u975E\u7EA2\u6843\u7EA7\u724C" : "\u8BF7\u9009\u4E00\u5F20 \u226410 \u7684\u975E\u7EA7\u724C\u8FD8\u8D21" : myTurn ? "\u8F6E\u5230\u4F60\u4E86\uFF0C\u60F3\u597D\u518D\u51FA" : view.phase === "returning" ? "\u7535\u8111\u6B63\u5728\u8FD8\u8D21\u2026" : ["loading", "downloading", "initializing"].includes(modelWorkerStage) ? "\u6B63\u5728\u51C6\u5907\u96BE\u5EA6\u56DB\u6A21\u578B\u2026" : `${nameFor(view, view.turn)}\u6B63\u5728\u601D\u8003\u2026`;
     const status = cue ? `${nameFor(view, cue.seat)} \xB7 ${escapeHTML(cue.label)}` : ordinaryStatus;
     const statusMark = cue ? '<span class="status-spark" aria-hidden="true">\u2726</span>' : `<span class="pulse-dot ${myTurn || returning ? "" : "quiet"}"></span>`;
     return `<div class="game-shell"><header class="game-header"><button class="wordmark" data-action="home" aria-label="\u56DE\u5230\u9996\u9875">\u60EF\u86CB<span>\xB7 \u7EC3\u4E60\u684C</span></button><div class="game-meta"><span class="meta-pill">\u7B2C ${view.handNumber} \u526F</span><span class="meta-pill">\u672C\u7EA7 <strong>${levelName(view.levelRank)}</strong></span></div><button class="header-link" data-action="home">\u8FD4\u56DE\u9996\u9875</button></header>
-  <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong>${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong>${levelName(view.levels[1])}</strong></div></section>
-  <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div><div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
+  <div class="game-layout"><main class="table-column"><section class="scoreboard"><div class="team-score"><span>\u6211\u65B9 \xB7 \u4F60\u548C\u961F\u53CB</span><strong class="${actionMotion?.handEnd?.team === 0 ? "score-fresh" : ""}">${levelName(view.levels[0])}</strong></div><div class="score-divider"><span>\u6253\u5230 A \u83B7\u80DC</span></div><div class="team-score opponents"><span>\u5BF9\u65B9 \xB7 \u4E24\u4F4D\u7535\u8111</span><strong class="${actionMotion?.handEnd?.team === 1 ? "score-fresh" : ""}">${levelName(view.levels[1])}</strong></div></section>
+  <section class="felt" aria-label="\u63BC\u86CB\u724C\u684C"><div class="felt-ring"></div>${playerHTML(view, 2, "top")}${playerHTML(view, 1, "left")}${playerHTML(view, 3, "right")}<div class="table-center">${cueHTML}<div class="center-eyebrow">${view.lastPlay ? "\u724C\u684C\u4E0A" : "\u7B49\u5F85\u9886\u51FA"}</div>${view.lastPlay ? `<div class="played-type ${specialPlay ? "power-type" : ""}">${TYPE_LABELS[view.lastPlay.type] || "\u51FA\u724C"}</div><div class="played-cards ${cue?.type === "play" && botCueFresh ? `cards-arriving ${direction}` : ""}">${playedCardsHTML}</div>${powerBurstHTML}<div class="played-by">${nameFor(view, view.lastSeat)}\u51FA\u7684\u724C</div>` : '<div class="table-idle">\u5148\u624B\uFF0C\u7531\u4F60\u638C\u63A7\u8282\u594F</div>'}</div><div class="self-badge ${myTurn ? "active" : ""} ${myTurn && actionMotion?.turnSeat === 0 ? "turn-fresh" : ""}"><div class="self-avatar">\u6211</div><span>${escapeHTML(view.players[0].name)}</span><small>\u4F59 ${view.handCounts[0]} \u5F20</small></div></section>
   ${roundHistoryHTML(view)}
   <section class="hand-area"><div class="section-heading"><div><span class="eyebrow">YOUR HAND</span><h2>\u624B\u91CC\u7684\u724C <span>${view.hand.length}</span></h2></div><button class="subtle-action" data-action="sort">\u6309\u70B9\u6570\u7406\u724C \u21BA</button></div><div class="hand-grid" aria-label="\u4F60\u7684\u5168\u90E8\u624B\u724C">${ordered.map(cardHTML).join("")}</div><div class="hand-hint">${move.text}</div>${declarationHTML}<div class="action-bar"><div class="turn-status ${cue ? "bot-action" : ""} ${cue && botCueFresh ? "cue-fresh" : ""}" role="status" aria-live="polite">${statusMark}${status}</div><div class="action-buttons"><button class="button ghost" data-action="bring-forward" ${!selected.size ? "disabled" : ""}>\u9009\u4E2D\u724C\u9760\u524D</button>${modelError && view.phase === "playing" && view.players[view.turn]?.bot ? '<button class="button outline" data-action="retry-bot">\u91CD\u8BD5\u6A21\u578B</button>' : ""}${view.phase === "playing" ? `<button class="button ghost" data-action="pass" ${!myTurn || !view.lastPlay ? "disabled" : ""}>\u8FC7\u724C</button><button class="button primary" data-action="play" ${!myTurn || !move.valid ? "disabled" : ""}>\u51FA\u724C <span aria-hidden="true">\u2197</span></button>` : returning ? `<button class="button primary" data-action="return" ${selected.size !== 1 || !returnableIds.has([...selected][0]) ? "disabled" : ""}>\u8FD8\u8D21 <span aria-hidden="true">\u2197</span></button>` : view.phase === "between" ? '<button class="button primary" data-action="next">\u5F00\u59CB\u4E0B\u4E00\u526F <span aria-hidden="true">\u2197</span></button>' : ""}</div></div></section></main>
   <aside class="side-panel"><div class="panel-tabs" role="tablist" aria-label="\u7B56\u7565\u548C\u8BB0\u5F55">${[["plans", "\u5F00\u5C40\u724C\u8DEF"], ["advice", "\u51FA\u724C\u5EFA\u8BAE"], ["history", "\u51FA\u724C\u8BB0\u5F55"]].map(([id, label]) => `<button class="panel-tab ${panel === id ? "active" : ""}" role="tab" aria-selected="${panel === id}" data-action="panel" data-id="${id}">${label}</button>`).join("")}</div>${panel === "plans" ? plansHTML(analysis, view) : panel === "advice" ? adviceHTML(view) : historyHTML(view)}</aside></div></div>`;
@@ -1188,14 +1204,51 @@
   function render() {
     root.innerHTML = screen === "loading" ? loadingHTML() : screen === "game" && match ? gameHTML() : homeHTML();
     botCueFresh = false;
+    actionMotion = null;
     ensureModelAssistance();
   }
-  function afterAction() {
+  function handPositions() {
+    return new Map([...root.querySelectorAll(".hand-grid .card")].map((card) => [card.dataset.id, card.getBoundingClientRect()]));
+  }
+  function renderHandMotion({ deal = false } = {}) {
+    const previous = deal ? /* @__PURE__ */ new Map() : handPositions();
+    render();
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const grid = root.querySelector(".hand-grid");
+    if (!grid) return;
+    const cards = [...grid.querySelectorAll(".card")];
+    const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length || 7;
+    cards.forEach((card, index) => {
+      if (typeof card.animate !== "function") return;
+      const base = getComputedStyle(card).transform;
+      const suffix = base === "none" ? "" : ` ${base}`;
+      if (deal) {
+        card.animate([
+          { opacity: 0, transform: `translateY(6px)${suffix}` },
+          { opacity: 1, transform: `translateY(0px)${suffix}` }
+        ], { duration: 160, delay: Math.floor(index / columns) * 28, easing: "cubic-bezier(.22,1,.36,1)", fill: "backwards" });
+        return;
+      }
+      const old = previous.get(card.dataset.id);
+      if (!old) return;
+      const next = card.getBoundingClientRect();
+      const dx = old.left - next.left;
+      const dy = old.top - next.top;
+      if (Math.abs(dx) + Math.abs(dy) < 1) return;
+      card.animate([
+        { transform: `translate(${dx}px,${dy}px)${suffix}` },
+        { transform: `translate(0px,0px)${suffix}` }
+      ], { duration: Math.abs(dx) > 1 ? 180 : 120, easing: "cubic-bezier(.22,1,.36,1)" });
+    });
+  }
+  function afterAction({ events = [], deal = false } = {}) {
     clearSelection();
     clearBotCue();
     modelError = null;
+    queueActionMotion(events);
     save();
-    render();
+    if (deal) renderHandMotion({ deal: true });
+    else render();
     scheduleBot();
   }
   function scheduleBot() {
@@ -1224,7 +1277,9 @@
         }
         if (acted) {
           modelError = null;
-          showBotCue(match.events.slice(previousEventCount));
+          const events = match.events.slice(previousEventCount);
+          showBotCue(events);
+          queueActionMotion(events);
           save();
           render();
           scheduleBot();
@@ -1274,7 +1329,7 @@
         roundArchiveOpen = false;
         resetModelAssistance();
         screen = "game";
-        afterAction();
+        afterAction({ events: match.events, deal: true });
         return;
       }
       if (action === "continue") {
@@ -1325,7 +1380,7 @@
         const id = button.dataset.id;
         selected.has(id) ? selected.delete(id) : selected.add(id);
         selectedDeclarationKey = null;
-        render();
+        renderHandMotion();
         return;
       }
       if (action === "declaration") {
@@ -1336,37 +1391,41 @@
       if (action === "sort") {
         cardOrder = sortCards(view.hand, view.levelRank).reverse().map((card) => card.id);
         save();
-        render();
+        renderHandMotion();
         return;
       }
       if (action === "bring-forward") {
         cardOrder = [...selected, ...cardOrder.filter((id) => !selected.has(id))];
         save();
-        render();
+        renderHandMotion();
         return;
       }
       if (action === "play") {
+        const start = match.events.length;
         play(match, 0, [...selected], currentMove(view).move);
-        afterAction();
+        afterAction({ events: match.events.slice(start) });
         return;
       }
       if (action === "pass") {
+        const start = match.events.length;
         pass(match, 0);
-        afterAction();
+        afterAction({ events: match.events.slice(start) });
         return;
       }
       if (action === "return") {
+        const start = match.events.length;
         returnTribute(match, 0, [...selected][0]);
-        afterAction();
+        afterAction({ events: match.events.slice(start) });
         return;
       }
       if (action === "next") {
+        const start = match.events.length;
         startNextHand(match);
         cardOrder = [];
         openingHand = null;
         panel = "plans";
         roundArchiveOpen = false;
-        afterAction();
+        afterAction({ events: match.events.slice(start), deal: true });
         return;
       }
       if (action === "panel") {
@@ -1385,7 +1444,7 @@
         cardOrder = plan.groups.flatMap((group) => group.cards.map((card) => card.id));
         syncOrder(view);
         save();
-        render();
+        renderHandMotion();
         inform(`\u5DF2\u6309\u201C${plan.title}\u201D\u7406\u724C`);
         return;
       }
@@ -1401,7 +1460,7 @@
           selectedDeclarationKey = choice.declaration ? moveKey(choice.declaration) : null;
           inform("\u5DF2\u6309\u8FD9\u6761\u51FA\u724C\u601D\u8DEF\u9009\u724C\uFF0C\u8BF7\u81EA\u5DF1\u786E\u8BA4\u51FA\u724C\u3002");
         }
-        render();
+        renderHandMotion();
         return;
       }
       if (action === "review") {

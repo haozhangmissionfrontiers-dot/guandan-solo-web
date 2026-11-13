@@ -28,6 +28,21 @@
 @keyframes status-arrive{from{opacity:.45;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 @keyframes card-land{from{opacity:0;transform:translate(var(--enter-x),var(--enter-y)) scale(.94)}to{opacity:1;transform:translate(0,0) scale(1)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+.player.active .avatar,.self-badge.active .self-avatar{box-shadow:0 0 0 2px #f1d58d,0 0 0 5px rgba(241,213,141,.18)}
+.player.turn-fresh .avatar,.self-badge.turn-fresh .self-avatar{animation:turn-appear 140ms cubic-bezier(.22,1,.36,1) both}
+.round-action.action-fresh{position:relative}
+.round-action.action-fresh::after{content:"";position:absolute;inset:0;border-radius:inherit;background:#e9c982;opacity:0;pointer-events:none;animation:record-glow 200ms ease-out both}
+.round-block.round-fresh .round-block-head span{animation:result-arrive 180ms cubic-bezier(.22,1,.36,1) both}
+.team-score strong.score-fresh{animation:result-arrive 180ms cubic-bezier(.22,1,.36,1) both}
+.played-type.power-type{animation:power-name 220ms cubic-bezier(.22,1,.36,1) both}
+.power-burst{position:absolute;left:50%;top:56%;z-index:3;width:0;height:0;pointer-events:none}
+.power-burst i{position:absolute;left:-1px;top:-4px;width:2px;height:9px;border-radius:2px;background:#f3d37d;opacity:0;box-shadow:0 0 3px rgba(243,211,125,.4);animation:power-ray 260ms cubic-bezier(.22,1,.36,1) both}
+@keyframes turn-appear{from{opacity:.65;transform:scale(.91)}to{opacity:1;transform:scale(1)}}
+@keyframes record-glow{from{opacity:.38}to{opacity:0}}
+@keyframes result-arrive{from{opacity:.5;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes power-name{from{opacity:.7;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+@keyframes power-ray{from{opacity:.9;transform:rotate(var(--angle)) translateY(-9px) scaleY(.5)}to{opacity:0;transform:rotate(var(--angle)) translateY(-30px) scaleY(1)}}
+@media(prefers-reduced-motion:reduce){.power-burst,.round-action.action-fresh::after{display:none}}
 .declaration-choices{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:2px 0 13px;font-size:12px;color:#60786b}
 .declaration-choice{border:1px solid #b8ccbd;border-radius:99px;background:#f7faf5;color:#265342;padding:7px 11px;font-size:12px;cursor:pointer}
 .declaration-choice.active{background:#245744;border-color:#245744;color:#fff}
